@@ -9,13 +9,14 @@ import time
 # --- CONFIGURACIÓN DE CONEXIÓN (EXCLUSIVA PARA LA NUBE) ---
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
+    creds_info = dict(st.secrets["gcp_service_account"])
     
-    # Intentamos obtener los Secretos
-    if "gcp_service_account" in st.secrets:
-        creds_dict = dict(st.secrets["gcp_service_account"])
-        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
-        client = gspread.authorize(creds)
-        return client.open("Dashboard_ISP").sheet1
+    # Limpieza automática de la llave por si acaso
+    creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+    
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
+    client = gspread.authorize(creds)
+    return client.open("Dashboard_ISP").sheet1
     else:
         st.error("❌ ERROR CRÍTICO: No se encontraron los 'Secrets' configurados en Streamlit Cloud.")
         st.stop()
