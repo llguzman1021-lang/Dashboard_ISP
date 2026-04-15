@@ -6,16 +6,26 @@ import plotly.express as px
 from datetime import datetime
 import time
 
-# --- CONFIGURACIÓN DE CONEXIÓN ---
+# --- CONFIGURACIÓN DE CONEXIÓN (CORREGIDA PARA CLOUD) ---
 def conectar():
+    # Definimos el alcance
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
-    creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+    
+    # Intentamos leer desde st.secrets (Para Streamlit Cloud)
+    try:
+        creds_dict = st.secrets["gcp_service_account"]
+        creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
+    except Exception:
+        # Fallback para local si aún tienes el archivo
+        creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
+        
     client = gspread.authorize(creds)
     return client.open("Dashboard_ISP").sheet1
 
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Multinet NOC Analytics", layout="wide", page_icon="💻")
 
+# Estilo CSS personalizado
 st.markdown("""
     <style>
     div.stButton > button:first-child {
@@ -25,12 +35,16 @@ st.markdown("""
         width: 100%;
         font-weight: bold;
     }
-    [data-testid="stSidebarNav"] {display: none;}
-    .st-emotion-cache-16idsys {margin-top: -50px;}
     </style>
     """, unsafe_allow_html=True)
 
-sheet = conectar()
+# Conexión inicial
+try:
+    sheet = conectar()
+except Exception as e:
+    st.error(f"❌ Error de conexión con Google Sheets: {e}")
+    st.stop()
+
 st.title("🛜 Multinet NOC: Gestión Avanzada de Incidentes")
 
 # --- SIDEBAR: ENTRADA DE DATOS ---
@@ -59,18 +73,17 @@ with st.sidebar:
         btn = st.form_submit_button("Guardar Registro")
         
         if btn:
-            with st.status("🚀 Sincronizando con Google Sheets...", expanded=False):
+            with st.status("🚀 Sincronizando...", expanded=False):
                 dt_i = datetime.combine(f_inicio, h_inicio)
                 dt_f = datetime.combine(f_fin, h_fin)
                 duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
                 
-                # Guardamos con formato de fecha limpio para evitar conflictos
                 nueva_fila = [
                     zona, categoria, equipo, f_inicio.strftime("%d/%m/%Y"), h_inicio.strftime("%H:%M:%S"), 
-                    f_fin.strftime("%d/%m/%Y"), h_fin.strftime("%H:%M:%S"), clientes, causa, desc, duracion
+                    f_fin.strftime("%d/%m/%Y"), h_fin.strftime("%H:%M:%S"), int(clientes), causa, desc, duracion
                 ]
                 sheet.append_row(nueva_fila)
-                st.toast("✅ ¡Información guardada correctamente!")
+                st.toast("✅ ¡Información guardada!")
                 time.sleep(1)
                 st.rerun()
 
@@ -80,92 +93,43 @@ try:
     if records:
         df = pd.DataFrame(records)
         
-        # Limpieza técnica de datos
+        # Limpieza técnica
         df['Duracion_Horas'] = pd.to_numeric(df['Duracion_Horas'], errors='coerce').fillna(0)
         df['Clientes_Afectados'] = pd.to_numeric(df['Clientes_Afectados'], errors='coerce').fillna(0)
-        
-        # Formateo de fechas para gráficas (formato interno de Python)
         df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
         df = df.dropna(subset=['Fecha_Convertida'])
 
-        # --- SECCIÓN 1: KPIs ---
+        # KPIs
         st.subheader("📊 Indicadores Críticos (KPIs)")
         k1, k2, k3, k4 = st.columns(4)
         
-        mttr = df['Duracion_Horas'].mean()
-        total_clientes = df['Clientes_Afectados'].sum()
-        total_fallas = len(df)
-        max_caida = df['Duracion_Horas'].max()
+        k1.metric("⏱️ MTTR Promedio", f"{df['Duracion_Horas'].mean():.2f} hrs")
+        k2.metric("👥 Impacto Total", f"{int(df['Clientes_Afectados'].sum())} Cli")
+        k3.metric("📉 Total Incidentes", len(df))
+        k4.metric("🚨 Máxima Caída", f"{df['Duracion_Horas'].max():.1f} hrs")
 
-        k1.metric("⏱️ MTTR Promedio", f"{mttr:.2f} hrs")
-        k2.metric("👥 Impacto Total", f"{int(total_clientes)} Cli")
-        k3.metric("📉 Total Incidentes", total_fallas)
-        k4.metric("🚨 Máxima Caída", f"{max_caida:.1f} hrs")
-
-        # --- SECCIÓN 2: GRÁFICAS RELEVANTES ---
-        
+        # Gráficas
         st.divider()
-        # 1. TENDENCIA
-        st.subheader("📈 Tendencia Diaria de Incidentes")
+        st.subheader("📈 Tendencia Diaria")
         df_trend = df.groupby('Fecha_Convertida').size().reset_index(name='Cantidad')
-        fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Cantidad', 
-                            line_shape="spline", color_discrete_sequence=['#FF4B4B'],
-                            title="Volumen de fallas detectadas por día")
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.plotly_chart(px.area(df_trend, x='Fecha_Convertida', y='Cantidad', title="Fallas por día"), use_container_width=True)
 
         st.divider()
-        # 2. CATEGORÍA E IMPACTO
-        st.subheader("🍩 Distribución por Categoría")
-        fig_pie = px.pie(df, names="Categoria", hole=0.5, 
-                         color_discrete_sequence=px.colors.qualitative.Safe,
-                         title="Afectación: Red Multinet vs Corporativos")
-        fig_pie.update_layout(height=450)
-        st.plotly_chart(fig_pie, use_container_width=True)
+        c_left, c_right = st.columns(2)
+        
+        with c_left:
+            st.plotly_chart(px.pie(df, names="Categoria", hole=0.5, title="Distribución por Categoría"), use_container_width=True)
+        
+        with c_right:
+            st.plotly_chart(px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", color="Causa_Raiz", title="Inactividad por Equipo"), use_container_width=True)
 
+        # Bitácora
         st.divider()
-        # 3. EQUIPOS (BARRA)
-        st.subheader("🛜 Tiempo de Inactividad por Equipo")
-        fig_bar = px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", color="Causa_Raiz", 
-                         barmode="group", text_auto='.1f',
-                         title="Acumulado de horas fuera de servicio por hardware")
-        st.plotly_chart(fig_bar, use_container_width=True)
-
-        st.divider()
-        # 4. ZONAS CRÍTICAS (BURBUJAS)
-        st.subheader("📍 Mapa de Impacto por Zona")
-        fig_bubble = px.scatter(df, x="Zona", y="Duracion_Horas", size="Clientes_Afectados", 
-                                color="Causa_Raiz", hover_name="Descripcion", size_max=50,
-                                title="Relación: Ubicación vs Duración (Tamaño = Clientes)")
-        st.plotly_chart(fig_bubble, use_container_width=True)
-
-        st.divider()
-        # 5. CAUSA RAÍZ (NUEVA: RELEVANCIA TÉCNICA)
-        st.subheader("🔍 Análisis de Causa Raíz")
-        df_causa = df.groupby('Causa_Raiz').size().reset_index(name='Frecuencia')
-        fig_causa = px.bar(df_causa, x="Frecuencia", y="Causa_Raiz", orientation='h',
-                          color="Causa_Raiz", title="¿Por qué se está cayendo la red?")
-        st.plotly_chart(fig_causa, use_container_width=True)
-
-        # --- SECCIÓN 3: BITÁCORA ---
-        st.divider()
-        with st.expander("🔍 Ver Bitácora Completa (Detalle de Excel)"):
-            df_visual = df.copy()
-            # Limpiamos visualmente la fecha para que no tenga horas extras
-            df_visual['Fecha_Inicio'] = df_visual['Fecha_Convertida'].dt.strftime('%d/%m/%Y')
-            
-            columnas_finales = [
-                "Zona", "Categoria", "Equipo_Afectado", "Fecha_Inicio", "Hora_Inicio", 
-                "Fecha_Fin", "Hora_Fin", "Clientes_Afectados", "Causa_Raiz", "Descripcion", "Duracion_Horas"
-            ]
-            st.dataframe(df_visual[columnas_finales], use_container_width=True)
-            
-            csv = df_visual[columnas_finales].to_csv(index=False).encode('utf-8')
-            st.download_button("📥 Descargar Reporte CSV", data=csv, 
-                               file_name=f"reporte_multinet_{datetime.now().strftime('%d_%m_%Y')}.csv", 
-                               mime="text/csv")
+        with st.expander("🔍 Ver Bitácora Completa"):
+            st.dataframe(df, use_container_width=True)
             
     else:
-        st.info("💡 La base de datos está vacía. Registra el primer incidente en el panel lateral.")
+        st.info("💡 La base de datos está vacía.")
 
 except Exception as e:
-    st.error(f"⚠️ Error de visualización: {e}")
+    st.error(f"⚠️ Error al cargar datos: {e}")
