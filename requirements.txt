@@ -1,11 +1,5 @@
-"type": "service_account",
-  "project_id": "neural-store-493416-d4",
-  "private_key_id": "d4e621a7a70b2e43c233f8e73691b74d43585c82",
-  "private_key": "-----BEGIN PRIVATE KEY-----\nMIIEvQIBADANBgkqhkiG9w0BAQEFAASCBKcwggSjAgEAAoIBAQDp7ywkmRE/v3WH\noBHZ/4I8Vyb5uHGGj/KPZ3bucQaC31zhoYjdQ7xz7l1W+6Ph33bkDXYz+FEa7Clz\ngVT3bn4FdODG0A9yNq/5xP4aXTNJuVKtIF5Rkbwg3TcHSIW6JgZxjMq1wqchHjFL\nEEVfqtu+auIN4GUMRcvJF5+7UFi3tXyZmoaboseJDftTUXmYVGD/E2KRr2RIXzOY\nkLLXQMVfLcBjssOBkmttKGESytYR16yXADJTQxlMspg+mWKhkVsxYo3lJHyL4OZI\nG6iuAYtRz87o3eGdCxooultw4qoug7NAvlYqCV1h+EC2g0jcuMt2775U/HLiX1jK\nP0p+olV7AgMBAAECggEAHlI0UAgQ/sjDpJEgTze5ezW2pQ59lHnq8CByf2Rh+iuW\nX95unXNOpV4jdgdGzhuHTvbZt9G7PXiXxNNiHnIRXoawLcTBA8ZH1+FrKCKlZ6xg\nJXV5FCyGDGJv4/9H6gFMu4IKsjVpMTc3H2ob+9LrCYrUAwVvQ4B2cfmgaAh5f1IE\nvWnUsTZMBZ6+xPsTLfx9d+xV08jrGG+5nX+xFwE6nMcA49QBupVyg51K4AxrLH1Z\nndPr7pb2ag0JF+BE9gaMvBNHDMTdJrGodDLoxtpAVF509AGA4IpMysnkvZqmW6uW\nd6M2b+OHG4cfOyiprTqLXmnoKG+DlMIutFAtJL9JCQKBgQD8GgH/cbDO8VG+nrgA\nfMNo7zdPlK2bmVlY3xvIfdbzByXo7c/AvrlyaJyufVQCJlwbMnGEmCKqbmjLg4+w\nsFudD5zpSyoE4x94BgHItWS+Z8ewg1McPsXPEkQehwOQ5SjSgNVvwBN7yXYVScxj\nczNHONGtbtcKTM+xN6b3c6k9gwKBgQDtjT7tU9YOmGfEGtgvA38k7HgxLp7RL83n\nOYAMZfiQDpkVJChuE6euM08uuTplaOH0qMGtjL+xVdvinOPJl0uhJrqvMXr9XGTQ\nlcA3tSJ0BWM6i74B9Sl7Vas/kNHLW3gToSJiaP9E4YJAko4I/gu6u1vvd3J72UV5\nHcl6uIE+qQKBgGv6H7zvTxFz3tVMWfcreO7q9r/JKIqqpdAgz1+SNoylFSGtKfye\nNAPCtsktuNuq3mxvsJtgJgjlfVEdql+9SZ/93fE2Vmr9dK8Ns5npx5qeDLOXq/M/\nF65XXoHMxkQ7Qr7Wm5Rfqniskz0O/NHjt6Tbu0MTZFtvBs4azhLSoTxNAoGADorT\nC1xSglo6H/s0uMwSAISpZvlfp5axmDIg8KFdchQysuSfxP1XCocBle6o8IRXMM8T\n7DftlEGZUGoiV7j3XEouq4Lv8IqzcUF5nu9ryIZ76J2daClF/NLlxOJstXJIC4uV\nu0iKOAFGJAXUxCApP6kwm5xIWeSXKC72opig8OECgYEA4ZZSMGJkzSjXxaIetors\nVkNPisq+P9JovgjD9N8B02doJK69twE+/mUskl5NL1hUKbMsMXRYHLPcQLS/xdyH\nGfwqBO8ZUytg5LqU5V1+fLue4s9DBqfkLvsBswXm0PdEH+uCb1/Mp9UtjBVgRFe2\n1OPOfaTn9txRBUa31iPZmp0=\n-----END PRIVATE KEY-----\n",
-  "client_email": "prueba@neural-store-493416-d4.iam.gserviceaccount.com",
-  "client_id": "103043909580520655216",
-  "auth_uri": "https://accounts.google.com/o/oauth2/auth",
-  "token_uri": "https://oauth2.googleapis.com/token",
-  "auth_provider_x509_cert_url": "https://www.googleapis.com/oauth2/v1/certs",
-  "client_x509_cert_url": "https://www.googleapis.com/robot/v1/metadata/x509/prueba%40neural-store-493416-d4.iam.gserviceaccount.com",
-  "universe_domain": "googleapis.com"
+streamlit
+pandas
+gspread
+oauth2client
+plotly
