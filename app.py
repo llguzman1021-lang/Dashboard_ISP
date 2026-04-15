@@ -10,18 +10,19 @@ import time
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Obtenemos los secretos directamente
-    creds_info = dict(st.secrets["gcp_service_account"])
+    # Extraer secretos
+    creds_dict = st.secrets["gcp_service_account"].to_dict()
     
-    # Solo una limpieza simple: convertir los \n de texto a saltos de línea reales
-    if "\\n" in creds_info["private_key"]:
-        creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
+    # Limpiar saltos de línea en la llave
+    creds_dict["private_key"] = creds_dict["private_key"].replace("\\n", "\n")
     
-    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
+    # Crear credenciales
+    creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     client = gspread.authorize(creds)
     
-    # Importante: Asegúrate que el nombre "Dashboard_ISP" sea idéntico en tu Google Drive
+    # Abrir el archivo
     return client.open("Dashboard_ISP").sheet1
+    
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Multinet NOC", layout="wide")
 
