@@ -10,27 +10,18 @@ import time
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Obtenemos los secretos
+    # Obtenemos los secretos directamente
     creds_info = dict(st.secrets["gcp_service_account"])
     
-    # --- LIMPIEZA EXTREMA DE LA LLAVE ---
-    key = creds_info["private_key"]
-    # Reemplazamos los saltos de línea literales
-    key = key.replace("\\n", "\n")
-    # Eliminamos espacios o caracteres invisibles al inicio y final
-    key = key.strip()
-    
-    # REPARACIÓN DE PADDING: Si la llave está incompleta, Python falla. 
-    # Esto asegura que la cadena sea válida para el decodificador.
-    while len(key.split("-----")[-2].replace("\n", "")) % 4 != 0:
-        key = key.replace("-----END", "=-----END")
-    
-    creds_info["private_key"] = key
+    # Solo una limpieza simple: convertir los \n de texto a saltos de línea reales
+    if "\\n" in creds_info["private_key"]:
+        creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
     
     creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
     client = gspread.authorize(creds)
+    
+    # Importante: Asegúrate que el nombre "Dashboard_ISP" sea idéntico en tu Google Drive
     return client.open("Dashboard_ISP").sheet1
-
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Multinet NOC", layout="wide")
 
