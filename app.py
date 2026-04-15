@@ -8,14 +8,15 @@ import time
 
 # --- CONFIGURACIÓN DE CONEXIÓN (CORREGIDA PARA CLOUD) ---
 def conectar():
+    # Definimos los permisos
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     
-    # Intentamos leer desde los Secrets de Streamlit (Para la Nube)
+    # FORZAMOS el uso de los Secrets de la nube
     if "gcp_service_account" in st.secrets:
-        creds_dict = st.secrets["gcp_service_account"]
+        creds_dict = dict(st.secrets["gcp_service_account"]) # Convertimos a diccionario
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_dict, scope)
     else:
-        # Esto solo funcionará en tu PC local
+        # Esto solo lo usará si lo corres en tu PC local con el archivo presente
         creds = ServiceAccountCredentials.from_json_keyfile_name("credentials.json", scope)
         
     client = gspread.authorize(creds)
