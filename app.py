@@ -9,35 +9,26 @@ import time
 # --- CONFIGURACIÓN DE PÁGINA ---
 st.set_page_config(page_title="Multinet NOC Analytics", layout="wide", page_icon="💻")
 
-# --- FUNCIÓN DE CONEXIÓN OPTIMIZADA CON CACHÉ ---
+# --- CONEXIÓN SEGURA CON CACHÉ ---
 @st.cache_resource(ttl=600)
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # Extraemos secretos
         creds_info = dict(st.secrets["gcp_service_account"])
-        
-        # Limpieza de la llave privada para evitar errores de 'padding' o 'substrate'
-        if "private_key" in creds_info:
-            creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
-        
+        creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
-        
-        # Abrimos el documento y la primera hoja
         return client.open("Dashboard_ISP").sheet1
     except Exception as e:
-        st.error(f"❌ Error crítico de conexión: {e}")
+        st.error(f"Error de conexión: {e}")
         return None
 
-# Intentar conectar
 sheet = conectar()
 
 if sheet is None:
-    st.warning("⚠️ La aplicación no pudo conectar con Google Sheets. Revisa los Secrets y los permisos del archivo.")
     st.stop()
 
-# --- ESTILO CSS PERSONALIZADO ---
+# --- ESTILOS ---
 st.markdown("""
     <style>
     div.stButton > button:first-child {
@@ -52,7 +43,7 @@ st.markdown("""
 
 st.title("🛜 Multinet NOC: Gestión Avanzada de Incidentes")
 
-# --- SIDEBAR: FORMULARIO DE ENTRADA ---
+# --- SIDEBAR: REGISTRO DE DATOS ---
 with st.sidebar:
     st.header("🌐 Entrada de Datos")
     with st.form("registro_falla", clear_on_submit=True):
@@ -64,12 +55,12 @@ with st.sidebar:
         ])
         
         c1, c2 = st.columns(2)
-        f_inicio = c1.date_input("🗓️ Fecha Inicio")
-        h_inicio = c2.time_input("🕒 Hora Inicio")
+        f_i = c1.date_input("🗓️ Fecha Inicio")
+        h_i = c2.time_input("🕒 Hora Inicio")
         
         c3, c4 = st.columns(2)
-        f_fin = c3.date_input("🗓️ Fecha Fin")
-        h_fin = c4.time_input("🕒 Hora Fin")
+        f_f = c3.date_input("🗓️ Fecha Fin")
+        h_f = c4.time_input("🕒 Hora Fin")
         
         clientes = st.number_input("👥 Clientes Afectados", min_value=0, step=1)
         causa = st.selectbox("🔍 Causa Raíz", ["Corte Fibra", "Falla Eléctrica", "Configuración", "Vandalismo", "Hardware"])
@@ -78,27 +69,26 @@ with st.sidebar:
         btn = st.form_submit_button("Guardar Registro")
         
         if btn:
-            with st.status("🚀 Sincronizando con la nube...", expanded=False):
-                dt_i = datetime.combine(f_inicio, h_inicio)
-                dt_f = datetime.combine(f_fin, h_fin)
-                duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                
-                nueva_fila = [
-                    zona, categoria, equipo, f_inicio.strftime("%d/%m/%Y"), h_inicio.strftime("%H:%M:%S"), 
-                    f_fin.strftime("%d/%m/%Y"), h_fin.strftime("%H:%M:%S"), int(clientes), causa, desc, duracion
-                ]
-                sheet.append_row(nueva_fila)
-                st.toast("✅ ¡Información guardada correctamente!")
-                time.sleep(1)
-                st.rerun()
+            dt_i = datetime.combine(f_i, h_i)
+            dt_f = datetime.combine(f_f, h_f)
+            duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+            
+            nueva_fila = [
+                zona, categoria, equipo, f_i.strftime("%d/%m/%Y"), h_i.strftime("%H:%M:%S"), 
+                f_f.strftime("%d/%m/%Y"), h_f.strftime("%H:%M:%S"), int(clientes), causa, desc, duracion
+            ]
+            sheet.append_row(nueva_fila)
+            st.toast("✅ ¡Registro guardado!")
+            time.sleep(1)
+            st.rerun()
 
-# --- DASHBOARD PRINCIPAL: VISUALIZACIÓN ---
+# --- CUERPO PRINCIPAL: DASHBOARD ---
 try:
     records = sheet.get_all_records()
     if records:
         df = pd.DataFrame(records)
         
-        # Procesamiento técnico de datos
+        # Procesamiento de datos
         df['Duracion_Horas'] = pd.to_numeric(df['Duracion_Horas'], errors='coerce').fillna(0)
         df['Clientes_Afectados'] = pd.to_numeric(df['Clientes_Afectados'], errors='coerce').fillna(0)
         df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
@@ -122,23 +112,25 @@ try:
         st.plotly_chart(fig_trend, use_container_width=True)
 
         st.divider()
-        col_pie, col_bar = st.columns(2)
+        c_pie, c_bar = st.columns(2)
         
-        with col_pie:
+        with c_pie:
             st.subheader("🍩 Por Categoría")
-            st.plotly_chart(px.pie(df, names="Categoria", hole=0.5), use_container_width=True)
+            fig_pie = px.pie(df, names="Categoria", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig_pie, use_container_width=True)
             
-        with col_bar:
+        with c_bar:
             st.subheader("🛜 Inactividad por Equipo")
-            st.plotly_chart(px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", color="Causa_Raiz"), use_container_width=True)
+            fig_bar = px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", color="Causa_Raiz", text_auto='.1f')
+            st.plotly_chart(fig_bar, use_container_width=True)
 
-        # --- SECCIÓN 3: TABLA DE DATOS ---
+        # --- SECCIÓN 3: TABLA ---
         st.divider()
         with st.expander("🔍 Ver Bitácora Completa"):
             st.dataframe(df.drop(columns=['Fecha_Convertida']), use_container_width=True)
             
     else:
-        st.info("💡 La base de datos está vacía. Registra el primer incidente en el panel lateral.")
+        st.info("💡 No hay datos registrados aún.")
 
 except Exception as e:
-    st.error(f"⚠️ Error al procesar los datos: {e}")
+    st.error(f"Error al procesar tablero: {e}")
