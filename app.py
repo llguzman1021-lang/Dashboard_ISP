@@ -14,7 +14,9 @@ st.set_page_config(page_title="Multinet NOC Analytics", layout="wide", page_icon
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
+        # Extraemos secretos del panel de Streamlit
         creds_info = dict(st.secrets["gcp_service_account"])
+        # Limpieza de la llave para evitar errores de formato
         creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
@@ -28,7 +30,7 @@ sheet = conectar()
 if sheet is None:
     st.stop()
 
-# --- ESTILOS ---
+# --- ESTILOS CSS PERSONALIZADOS ---
 st.markdown("""
     <style>
     div.stButton > button:first-child {
@@ -37,6 +39,10 @@ st.markdown("""
         border-radius: 10px;
         width: 100%;
         font-weight: bold;
+    }
+    /* Estilo para los encabezados de métricas */
+    [data-testid="stMetricLabel"] {
+        color: #ffffff !important;
     }
     </style>
     """, unsafe_allow_html=True)
@@ -88,7 +94,7 @@ try:
     if records:
         df = pd.DataFrame(records)
         
-        # Procesamiento de datos
+        # Procesamiento de datos y fechas
         df['Duracion_Horas'] = pd.to_numeric(df['Duracion_Horas'], errors='coerce').fillna(0)
         df['Clientes_Afectados'] = pd.to_numeric(df['Clientes_Afectados'], errors='coerce').fillna(0)
         df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
@@ -103,12 +109,20 @@ try:
         k3.metric("📉 Total Incidentes", len(df))
         k4.metric("🚨 Máxima Caída", f"{df['Duracion_Horas'].max():.1f} hrs")
 
-        # --- SECCIÓN 2: GRÁFICAS ---
+        # --- SECCIÓN 2: GRÁFICAS (CORREGIDAS PARA MODO OSCURO) ---
         st.divider()
         st.subheader("📈 Tendencia Diaria de Incidentes")
         df_trend = df.groupby('Fecha_Convertida').size().reset_index(name='Cantidad')
         fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Cantidad', 
                             line_shape="spline", color_discrete_sequence=['#FF4B4B'])
+        
+        # Ajuste visual Dark
+        fig_trend.update_layout(
+            template="plotly_dark", 
+            paper_bgcolor='rgba(0,0,0,0)', 
+            plot_bgcolor='rgba(0,0,0,0)',
+            font=dict(color="white")
+        )
         st.plotly_chart(fig_trend, use_container_width=True)
 
         st.divider()
@@ -116,12 +130,25 @@ try:
         
         with c_pie:
             st.subheader("🍩 Por Categoría")
-            fig_pie = px.pie(df, names="Categoria", hole=0.5, color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_pie = px.pie(df, names="Categoria", hole=0.5, 
+                             color_discrete_sequence=px.colors.qualitative.Pastel)
+            fig_pie.update_layout(
+                template="plotly_dark", 
+                paper_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="white")
+            )
             st.plotly_chart(fig_pie, use_container_width=True)
             
         with c_bar:
             st.subheader("🛜 Inactividad por Equipo")
-            fig_bar = px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", color="Causa_Raiz", text_auto='.1f')
+            fig_bar = px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", 
+                             color="Causa_Raiz", text_auto='.1f')
+            fig_bar.update_layout(
+                template="plotly_dark", 
+                paper_bgcolor='rgba(0,0,0,0)', 
+                plot_bgcolor='rgba(0,0,0,0)',
+                font=dict(color="white")
+            )
             st.plotly_chart(fig_bar, use_container_width=True)
 
         # --- SECCIÓN 3: TABLA ---
