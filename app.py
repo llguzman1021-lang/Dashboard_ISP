@@ -81,8 +81,8 @@ with st.sidebar:
         
         equipo = st.selectbox("⚙️ Equipamiento Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
         
-st.write("---")
-st.write("⏱️ **Ventana Temporal de Inicio**")
+        st.write("---")
+        st.write("⏱️ **Ventana Temporal de Inicio**")
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
 
@@ -94,57 +94,66 @@ st.write("⏱️ **Ventana Temporal de Inicio**")
         else:
             hora_inicio_final = "N/A"
 
-st.write("---")
-st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
+        st.write("---")
+        st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
         
         c_c1, c_c2 = st.columns(2)
-
-# Fecha SIEMPRE obligatoria
-f_f = c_c1.date_input("🗓️ Fecha de Cierre")
-
-# Solo control de hora
-conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
-
-st.info("ℹ️ Si selecciona 'No' en hora, el sistema registrará 'N/A' y la duración como 0h.")
-
-c3, c4 = st.columns(2)
-
-final_f = f_f.strftime("%d/%m/%Y")
-final_h = "N/A"
-duracion = 0
-desc_conocimiento = "Total"
-
-# Hora de cierre
-if conoce_h_f == "Sí":
-    h_f = c4.time_input("🕒 Hora de Cierre")
-    final_h = h_f.strftime("%H:%M:%S")
-
-# Tipo de conocimiento
-if conoce_h_i == "Sí" and conoce_h_f == "Sí":
-    desc_conocimiento = "Total"
-elif conoce_h_i == "Sí" or conoce_h_f == "Sí":
-    desc_conocimiento = "Parcial"
-else:
-    desc_conocimiento = "Ninguno"
-
-# Cálculo de duración
-try:
-    if conoce_h_i == "Sí" and conoce_h_f == "Sí":
-        dt_i = datetime.combine(f_i, h_i)
-        dt_f = datetime.combine(f_f, h_f)
-        duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-
-        if duracion < 0:
-            st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
-            duracion = 0
-    else:
+        conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
+        conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
+        
+        st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
+        
+        c3, c4 = st.columns(2)
+        final_f = "N/A"
+        final_h = "N/A"
         duracion = 0
-except:
-    duracion = 0
+        desc_conocimiento = "Total"
 
-st.write("---")
-clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
-causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
+        if conoce_f_f == "Sí" and conoce_h_f == "Sí":
+            f_f = c3.date_input("🗓️ Fecha de Cierre")
+            h_f = c4.time_input("🕒 Hora de Cierre")
+            final_f = f_f.strftime("%d/%m/%Y")
+            final_h = h_f.strftime("%H:%M:%S")
+            desc_conocimiento = "Total"
+            
+            try:
+                if conoce_h_i == "Sí":
+                    dt_i = datetime.combine(f_i, h_i)
+                    dt_f = datetime.combine(f_f, h_f)
+                    duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+                    if duracion < 0:
+                        st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
+                        duracion = 0
+                        final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
+                else:
+                    duracion = 0
+            except:
+                duracion = 0
+                final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
+        
+        elif conoce_f_f == "Sí" and conoce_h_f == "No":
+            f_f = c3.date_input("🗓️ Fecha de Cierre")
+            final_f = f_f.strftime("%d/%m/%Y")
+            final_h = "N/A"
+            duracion = 0
+            desc_conocimiento = "Parcial (Solo Fecha)"
+
+        elif conoce_f_f == "No" and conoce_h_f == "Sí":
+            h_f = c4.time_input("🕒 Hora de Cierre")
+            final_f = "N/A"
+            final_h = h_f.strftime("%H:%M:%S")
+            duracion = 0
+            desc_conocimiento = "Parcial (Solo Hora)"
+        
+        else:
+            final_f = "N/A"
+            final_h = "N/A"
+            duracion = 0
+            desc_conocimiento = "Ninguno"
+
+        st.write("---")
+        clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
+        causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
             "Corte de Fibra Óptica", 
             "Inestabilidad Suministro Eléctrico", 
             "Desajuste de Configuración", 
@@ -376,3 +385,4 @@ try:
         st.info("La base de datos operativa se encuentra vacía.")
 except Exception as e:
     st.error(f"Error Crítico en el Procesamiento de Datos Operativos: {e}")
+            
