@@ -160,7 +160,7 @@ with st.sidebar:
         ])
         desc = st.text_area("📝 Detalles Técnicos / Descripción")
         
-        if st.form_submit_button("🚀 Sincronizar con Base de Datos Central"):
+        if st.form_submit_button("Guardar Registro Operativo"):
             # Se asume que el orden de columnas en GSheets es:
             # Zona, Servicio, Categoría, Equipo, Fecha_Inicio, Hora_Inicio, Fecha_Fin, Hora_Fin, Clientes_Afectados, Causa_Raiz, Descripción, Duracion_Horas, Conocimiento_Tiempos
             nueva_fila = [
@@ -222,27 +222,23 @@ try:
             fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # 2. Distribución por Categoría de Cliente
-            col_g1, col_g2 = st.columns([2, 3])
+            # 2. Distribución por Categoría de Cliente (Ahora uno sobre otro)
+            fig_pie = px.pie(df_mes, names='Categoria', title="📂 <b>Composición de Cartera Afectada</b><br><sup>Distribución porcentual de incidentes por segmento de mercado</sup>", 
+                            hole=0.6, template="plotly_dark", color_discrete_sequence=['#0068c9', '#ff4b4b'])
+            fig_pie.update_traces(textposition='outside', textinfo='percent+label', textfont_size=13)
+            fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=70, b=0))
+            st.plotly_chart(fig_pie, use_container_width=True)
             
-            with col_g1:
-                fig_pie = px.pie(df_mes, names='Categoria', title="📂 <b>Composición de Cartera Afectada</b><br><sup>Distribución porcentual de incidentes por segmento de mercado</sup>", 
-                                hole=0.6, template="plotly_dark", color_discrete_sequence=['#0068c9', '#ff4b4b'])
-                fig_pie.update_traces(textposition='outside', textinfo='percent+label', textfont_size=13)
-                fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=70, b=0))
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            # 3. Top Zonas Críticas (Emoji profesional de Pin)
-            with col_g2:
-                top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
-                top_zonas.columns = ['Zona', 'Horas Offline']
-                fig_bar = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
-                                 title="📍 <b>Puntos Críticos de Indisponibilidad</b><br><sup>Top 5 sectores geográficos con mayor degradación acumulada de servicio</sup>",
-                                 labels={'Horas Offline': 'Total Horas de Indisponibilidad'},
-                                 text_auto='.2f', template="plotly_dark", color='Horas Offline', color_continuous_scale='Blues')
-                fig_bar.update_layout(coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=70, b=0))
-                fig_bar.update_traces(marker_line_width=0, textfont_size=13)
-                st.plotly_chart(fig_bar, use_container_width=True)
+            # 3. Top Zonas Críticas (Cambiado a icono de tendencia profesional)
+            top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
+            top_zonas.columns = ['Zona', 'Horas Offline']
+            fig_bar = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
+                             title="📈 <b>Puntos Críticos de Indisponibilidad</b><br><sup>Top 5 sectores geográficos con mayor degradación acumulada de servicio</sup>",
+                             labels={'Horas Offline': 'Total Horas de Indisponibilidad'},
+                             text_auto='.2f', template="plotly_dark", color='Horas Offline', color_continuous_scale='Blues')
+            fig_bar.update_layout(coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=70, b=0))
+            fig_bar.update_traces(marker_line_width=0, textfont_size=13)
+            st.plotly_chart(fig_bar, use_container_width=True)
 
             # --- BITÁCORA INTELIGENTE (CON EDICIÓN Y RECALCULO DE TIEMPO) ---
             st.divider()
