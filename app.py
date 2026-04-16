@@ -141,12 +141,6 @@ try:
         duracion = 0
 except:
     duracion = 0
-        
-        else:
-            final_f = "N/A"
-            final_h = "N/A"
-            duracion = 0
-            desc_conocimiento = "Ninguno"
 
         st.write("---")
         clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
