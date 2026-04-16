@@ -5,6 +5,7 @@ from oauth2client.service_account import ServiceAccountCredentials
 import plotly.express as px
 from datetime import datetime
 import calendar
+import re
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -19,14 +20,14 @@ def conectar():
         creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
-        return client.open("Dashboard_ISP").sheet1
+        return client.open("Dashboard_ISP")
     except Exception as e:
         st.error(f"Error de enlace con la base de datos central: {e}")
         return None
 
-sheet = conectar()
-if sheet is None: st.stop()
-
+spreadsheet = conectar()
+if spreadsheet is None: st.stop()
+sheet = spreadsheet.sheet1
 
 # --- MOTOR DE CÁLCULOS KPI's ESTRATÉGICOS ---
 def calcular_metricas(df_kpi, horas_mes_total):
@@ -184,7 +185,7 @@ with st.sidebar:
     if st.button("Guardar Registro Operativo"):
         nueva_fila = [
             zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), hora_inicio_final, 
-            final_f, final_h, int(clientes), causa, desc, duracion, desc_conocimiento
+            f_f.strftime("%d/%m/%Y"), final_h, int(clientes), causa, desc, duracion, desc_conocimiento
         ]
         sheet.append_row(nueva_fila)
         st.toast("✅ Base de datos operativa actualizada satisfactoriamente")
@@ -193,9 +194,85 @@ with st.sidebar:
 
 # --- PROCESAMIENTO Y ANALÍTICA DE DATOS ---
 try:
-    records = sheet.get_all_records()
-    if records:
-        df_total = pd.DataFrame(records)
+    all_records = []
+    
+    # Helper to parse Spanish dates
+    def parse_fecha(fecha_str):
+        if not isinstance(fecha_str, str): return "N/A"
+        fecha_str = fecha_str.strip().lower()
+        if not fecha_str or fecha_str == "n/a": return "N/A"
+        meses_dict = {"enero": "01", "febrero": "02", "marzo": "03", "abril": "04", "mayo": "05", "junio": "06", 
+                      "julio": "07", "agosto": "08", "septiembre": "09", "octubre": "10", "noviembre": "11", "diciembre": "12"}
+        match = re.search(r"(\d{1,2})\s+de\s+([a-z]+)", fecha_str)
+        if match:
+            dia = match.group(1).zfill(2)
+            mes = meses_dict.get(match.group(2), "01")
+            return f"{dia}/{mes}/2026"
+        return fecha_str
+        
+    def parse_hora(hora_str):
+        if not isinstance(hora_str, str): return "N/A"
+        hora_str = hora_str.strip().upper()
+        if not hora_str or hora_str == "N/A": return "N/A"
+        match = re.search(r"(\d{1,2})[.:](\d{2})\s*(AM|PM)?", hora_str)
+        if match:
+            h, m, ampm = match.groups()
+            h = int(h)
+            if ampm == "PM" and h < 12: h += 12
+            if ampm == "AM" and h == 12: h = 0
+            return f"{str(h).zfill(2)}:{m}:00"
+        return "N/A"
+
+    for ws in spreadsheet.worksheets():
+        ws_records = ws.get_all_records()
+        if not ws_records: continue
+        
+        keys = list(ws_records[0].keys())
+        is_old = any(k.upper() == 'ZONA' for k in keys) and not any(k == 'Causa_Raiz' for k in keys)
+        
+        for r in ws_records:
+            if is_old:
+                f_ini = parse_fecha(r.get('FECHA DE INICIO', ''))
+                f_fin = parse_fecha(r.get('FECHA DE FINALIZACIÓN', ''))
+                h_ini = parse_hora(r.get('HORA DE INICIO', ''))
+                h_fin = parse_hora(r.get('HORA DE FINALIZACIÓN', ''))
+                
+                dur = 0.0
+                if f_ini != "N/A" and f_fin != "N/A" and h_ini != "N/A" and h_fin != "N/A":
+                    try:
+                        dt_i = datetime.strptime(f"{f_ini} {h_ini}", "%d/%m/%Y %H:%M:%S")
+                        dt_f = datetime.strptime(f"{f_fin} {h_fin}", "%d/%m/%Y %H:%M:%S")
+                        dur = round((dt_f - dt_i).total_seconds() / 3600, 2)
+                        if dur < 0: dur = 0.0
+                    except:
+                        pass
+                
+                conocimiento = "Total" if (h_ini != "N/A" and h_fin != "N/A") else "Parcial (Solo Fechas)"
+                
+                desc = str(r.get('DESCRIPCIÓN DE LA FALLA', ''))
+                match_clientes = re.search(r'(\d+)\s+clientes', desc, re.IGNORECASE)
+                cl = int(match_clientes.group(1)) if match_clientes else 0
+
+                all_records.append({
+                    "Zona": r.get('ZONA', 'Desconocido'),
+                    "Servicio": "Internet",
+                    "Categoria": "Histórico",
+                    "Equipo_Afectado": r.get('EQUIPO AFECTADO', 'No Especificado'),
+                    "Fecha_Inicio": f_ini,
+                    "Hora_Inicio": h_ini,
+                    "Fecha_Fin": f_fin,
+                    "Hora_Fin": h_fin,
+                    "Clientes_Afectados": cl,
+                    "Causa_Raiz": "No Especificado",
+                    "Descripcion": desc,
+                    "Duracion_Horas": dur,
+                    "Conocimiento_Tiempos": conocimiento
+                })
+            else:
+                all_records.append(r)
+
+    if all_records:
+        df_total = pd.DataFrame(all_records)
         df_total['gsheet_id'] = range(2, len(df_total) + 2)
         
         # --- AUTO-DETECCIÓN INTELIGENTE DE ENCABEZADOS EN GDOCS ---
@@ -264,7 +341,7 @@ try:
                 # Fila 1
                 k1, k2, k3 = st.columns(3)
                 k1.metric("⏱️ Tiempo Promedio Resolución", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse", help="Promedio de horas que toma reparar el servicio tras la falla.")
-                k2.metric("👥 Clientes Interrumpidos", f"{cl_imp} clientes", help="Cantidad de usuarios totales que se quedaron sin conexión en este informe.")
+                k2.metric("👥 Clientes Interrumpidos", f"{cl_imp} clientes", help="Cantidad de usuarios totales. Nota: Esta es una métrica estimada; si no hubo cuantificación exacta en terreno, el volumen difiere de la realidad.")
                 k3.metric("⏳ Afectación Total en Días", f"{dias_totales:.2f} días", delta=delta_dias, delta_color="inverse", help="La suma global de todas las desconexiones pasada a proporción de días enteros.")
                 
                 # Fila 2
@@ -273,6 +350,8 @@ try:
                 k4.metric("🛑 Peor Falla Individual", f"{max_h:.2f} horas", help="La duración en horas del incidente más severo del mes.")
                 k5.metric("✅ Porcentaje Disponibilidad", f"{sla_porcentaje:.2f}%", delta=delta_s, delta_color="normal", help="Nivel integral de servicio operativo (Excluyendo cortes solapados al mismo tiempo).")
                 k6.metric("📉 Promedio de Afectación", f"{acd_horas:.2f} horas/cliente", delta=delta_a, delta_color="inverse", help="Cantidad promedio estadística de horas que un cliente común experimentó caída de internet.")
+                
+                st.caption("ℹ️ **Nota Técnica sobre Población Afectada:** Las cantidades de usuarios interrumpidos listadas en estos tableros son *estimaciones operacionales*. Estos valores se registran solo si el personal validó exactamente la cifra en el lugar; en registros sin telemetría exacta (como eventos históricos generales), se computa una afectación mínima para evitar cálculos estadísticos engañosos.")
 
                 # --- VISUALIZACIÓN MULTI-FACTOR (LAS NUEVAS GRÁFICAS KPI) ---
                 st.divider()
@@ -447,3 +526,4 @@ try:
 
 except Exception as e:
     st.error(f"Error Técnico de Análisis de Datos: {e}")
+
