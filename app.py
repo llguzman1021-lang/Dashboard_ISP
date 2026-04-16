@@ -7,16 +7,14 @@ from datetime import datetime
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
-st.set_page_config(page_title="Multinet NOC Analytics", layout="wide", page_icon="💻")
+st.set_page_config(page_title="Multinet NOC Analytics", layout="wide", page_icon="🌐")
 
-# --- CONEXIÓN SEGURA CON CACHÉ ---
-@st.cache_resource(ttl=600)
+# --- CONEXIÓN SEGURA ---
+@st.cache_resource(ttl=300)
 def conectar():
     scope = ["https://spreadsheets.google.com/feeds", "https://www.googleapis.com/auth/drive"]
     try:
-        # Extraemos secretos del panel de Streamlit
         creds_info = dict(st.secrets["gcp_service_account"])
-        # Limpieza de la llave para evitar errores de formato
         creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
@@ -26,39 +24,33 @@ def conectar():
         return None
 
 sheet = conectar()
+if sheet is None: st.stop()
 
-if sheet is None:
-    st.stop()
-
-# --- ESTILOS CSS PERSONALIZADOS ---
+# --- ESTILOS ---
 st.markdown("""
     <style>
-    div.stButton > button:first-child {
-        background-color: #0068c9;
-        color: white;
-        border-radius: 10px;
-        width: 100%;
-        font-weight: bold;
-    }
-    /* Estilo para los encabezados de métricas */
-    [data-testid="stMetricLabel"] {
-        color: #ffffff !important;
-    }
+    div.stButton > button:first-child { background-color: #0068c9; color: white; border-radius: 10px; width: 100%; font-weight: bold; }
+    [data-testid="stMetricLabel"] { color: #ffffff !important; }
     </style>
     """, unsafe_allow_html=True)
 
-st.title("🛜 Multinet NOC: Gestión Avanzada de Incidentes")
-
-# --- SIDEBAR: REGISTRO DE DATOS ---
+# --- SIDEBAR: CONFIGURACIÓN Y ENTRADA ---
 with st.sidebar:
-    st.header("🌐 Entrada de Datos")
+    st.title("⚙️ Panel de Control")
+    
+    # Filtro de Mes para el Dashboard
+    mes_actual_num = datetime.now().month
+    mes_seleccionado = st.selectbox("📅 Seleccionar Mes de Análisis", 
+                                    ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
+                                     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"],
+                                    index=mes_actual_num-1)
+    
+    st.divider()
+    st.header("📝 Registro de Incidente")
     with st.form("registro_falla", clear_on_submit=True):
-        zona = st.text_input("📍 Zona / Ubicación")
-        categoria = st.selectbox("📁 Categoría", ["Red Multinet", "Cliente Corporativo"])
-        equipo = st.selectbox("🛠️ Equipo Afectado", [
-            "OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", 
-            "Fibra Principal", "Antenas Ubiquiti", "Sistema de Vauchers", "Caja NAP"
-        ])
+        zona = st.text_input("📍 Zona")
+        categoria = st.selectbox("📂 Categoría", ["Red Multinet", "Cliente Corporativo"])
+        equipo = st.selectbox("🔧 Equipo", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
         
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha Inicio")
@@ -68,96 +60,94 @@ with st.sidebar:
         f_f = c3.date_input("🗓️ Fecha Fin")
         h_f = c4.time_input("🕒 Hora Fin")
         
-        clientes = st.number_input("👥 Clientes Afectados", min_value=0, step=1)
-        causa = st.selectbox("🔍 Causa Raíz", ["Corte Fibra", "Falla Eléctrica", "Configuración", "Vandalismo", "Hardware"])
-        desc = st.text_area("📝 Descripción")
+        sin_hora = st.checkbox("❓ Sin hora/fecha exacta de fin")
         
-        btn = st.form_submit_button("Guardar Registro")
+        clientes = st.number_input("👥 Cantidad Clientes", min_value=0, step=1)
+        sin_clientes = st.checkbox("❓ Sin dato exacto de clientes")
         
-        if btn:
+        causa = st.selectbox("🔎 Causa Raíz", ["Corte Fibra", "Falla Eléctrica", "Configuración", "Vandalismo", "Hardware"])
+        desc = st.text_area("📄 Descripción")
+        
+        if st.form_submit_button("Guardar en Bitácora"):
             dt_i = datetime.combine(f_i, h_i)
             dt_f = datetime.combine(f_f, h_f)
-            duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+            duracion = round((dt_f - dt_i).total_seconds() / 3600, 2) if not sin_hora else 0
             
             nueva_fila = [
                 zona, categoria, equipo, f_i.strftime("%d/%m/%Y"), h_i.strftime("%H:%M:%S"), 
-                f_f.strftime("%d/%m/%Y"), h_f.strftime("%H:%M:%S"), int(clientes), causa, desc, duracion
+                f_f.strftime("%d/%m/%Y") if not sin_hora else "N/A", 
+                h_f.strftime("%H:%M:%S") if not sin_hora else "N/A", 
+                int(clientes) if not sin_clientes else 0, 
+                causa, desc, duracion
             ]
             sheet.append_row(nueva_fila)
-            st.toast("✅ ¡Registro guardado!")
+            st.toast("✅ Registro Exitoso")
             time.sleep(1)
             st.rerun()
 
-# --- CUERPO PRINCIPAL: DASHBOARD ---
+# --- PROCESAMIENTO DE DATOS ---
 try:
     records = sheet.get_all_records()
     if records:
         df = pd.DataFrame(records)
-        
-        # Procesamiento de datos y fechas
-        df['Duracion_Horas'] = pd.to_numeric(df['Duracion_Horas'], errors='coerce').fillna(0)
-        df['Clientes_Afectados'] = pd.to_numeric(df['Clientes_Afectados'], errors='coerce').fillna(0)
         df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
-        df = df.dropna(subset=['Fecha_Convertida'])
-
-        # --- SECCIÓN 1: KPIs ---
-        st.subheader("📊 Indicadores Críticos (KPIs)")
-        k1, k2, k3, k4 = st.columns(4)
         
-        k1.metric("⏱️ MTTR Promedio", f"{df['Duracion_Horas'].mean():.2f} hrs")
-        k2.metric("👥 Impacto Total", f"{int(df['Clientes_Afectados'].sum())} Cli")
-        k3.metric("📉 Total Incidentes", len(df))
-        k4.metric("🚨 Máxima Caída", f"{df['Duracion_Horas'].max():.1f} hrs")
+        # Filtrado por Mes Seleccionado
+        meses_dict = {"Enero":1, "Febrero":2, "Marzo":3, "Abril":4, "Mayo":5, "Junio":6, 
+                      "Julio":7, "Agosto":8, "Septiembre":9, "Octubre":10, "Noviembre":11, "Diciembre":12}
+        df_mes = df[df['Fecha_Convertida'].dt.month == meses_dict[mes_seleccionado]].copy()
 
-        # --- SECCIÓN 2: GRÁFICAS (CORREGIDAS PARA MODO OSCURO) ---
-        st.divider()
-        st.subheader("📈 Tendencia Diaria de Incidentes")
-        df_trend = df.groupby('Fecha_Convertida').size().reset_index(name='Cantidad')
-        fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Cantidad', 
-                            line_shape="spline", color_discrete_sequence=['#FF4B4B'])
-        
-        # Ajuste visual Dark
-        fig_trend.update_layout(
-            template="plotly_dark", 
-            paper_bgcolor='rgba(0,0,0,0)', 
-            plot_bgcolor='rgba(0,0,0,0)',
-            font=dict(color="white")
-        )
-        st.plotly_chart(fig_trend, use_container_width=True)
+        st.title(f"📊 Dashboard NOC: {mes_seleccionado} {datetime.now().year}")
 
-        st.divider()
-        c_pie, c_bar = st.columns(2)
-        
-        with c_pie:
-            st.subheader("🍩 Por Categoría")
-            fig_pie = px.pie(df, names="Categoria", hole=0.5, 
-                             color_discrete_sequence=px.colors.qualitative.Pastel)
-            fig_pie.update_layout(
-                template="plotly_dark", 
-                paper_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="white")
-            )
-            st.plotly_chart(fig_pie, use_container_width=True)
+        if not df_mes.empty:
+            # --- SECCIÓN 1: KPIs ---
+            k1, k2, k3, k4 = st.columns(4)
             
-        with c_bar:
-            st.subheader("🛜 Inactividad por Equipo")
-            fig_bar = px.bar(df, x="Equipo_Afectado", y="Duracion_Horas", 
-                             color="Causa_Raiz", text_auto='.1f')
-            fig_bar.update_layout(
-                template="plotly_dark", 
-                paper_bgcolor='rgba(0,0,0,0)', 
-                plot_bgcolor='rgba(0,0,0,0)',
-                font=dict(color="white")
-            )
+            avg_duracion = df_mes['Duracion_Horas'].mean()
+            total_impacto = df_mes['Clientes_Afectados'].sum()
+            caida_critica = df_mes['Duracion_Horas'].max()
+            duracion_total = df_mes['Duracion_Horas'].sum()
+
+            k1.metric("⏱️ MTTR Promedio", f"{avg_duracion:.2f} Horas")
+            k2.metric("👥 Impacto Total", f"{int(total_impacto)} Clientes")
+            k3.metric("🚨 Caída más Crítica", f"{caida_critica:.2f} Horas")
+            k4.metric("⏳ Duración Acumulada", f"{duracion_total:.2f} Horas")
+
+            # --- SECCIÓN 2: GRÁFICAS VERTICALES ---
+            st.divider()
+            st.subheader("📈 Volumen Mensual de Fallas")
+            fig_trend = px.line(df_mes.groupby('Fecha_Convertida').size().reset_index(name='Cant'), 
+                                x='Fecha_Convertida', y='Cant', markers=True, template="plotly_dark")
+            fig_trend.update_traces(line_color='#0068c9')
+            st.plotly_chart(fig_trend, use_container_width=True)
+
+            st.subheader("📂 Distribución por Categoría")
+            fig_pie = px.pie(df_mes, names="Categoria", hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
+            st.plotly_chart(fig_pie, use_container_width=True)
+
+            st.subheader("🛠️ Inactividad Acumulada por Equipo")
+            fig_bar = px.bar(df_mes.groupby('Equipo_Afectado')['Duracion_Horas'].sum().reset_index(), 
+                             x="Equipo_Afectado", y="Duracion_Horas", template="plotly_dark", color="Equipo_Afectado")
             st.plotly_chart(fig_bar, use_container_width=True)
 
-        # --- SECCIÓN 3: TABLA ---
-        st.divider()
-        with st.expander("🔍 Ver Bitácora Completa"):
-            st.dataframe(df.drop(columns=['Fecha_Convertida']), use_container_width=True)
+            # --- SECCIÓN 3: BITÁCORA INTERACTIVA ---
+            st.divider()
+            st.subheader("🔍 Bitácora e Historial")
             
-    else:
-        st.info("💡 No hay datos registrados aún.")
+            # Filtro de búsqueda interactivo
+            busqueda = st.text_input("Filtrar por Zona, Equipo o Causa:", "")
+            if busqueda:
+                df_mes = df_mes[df_mes.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
 
+            st.dataframe(df_mes.drop(columns=['Fecha_Convertida']), use_container_width=True)
+            
+            # Botón de Descarga
+            csv = df_mes.to_csv(index=False).encode('utf-8')
+            st.download_button(label="📥 Descargar Reporte Mensual (CSV)", data=csv, 
+                               file_name=f"NOC_Report_{mes_seleccionado}.csv", mime='text/csv')
+        else:
+            st.info(f"No hay registros encontrados para el mes de {mes_seleccionado}.")
+    else:
+        st.info("La base de datos está vacía.")
 except Exception as e:
-    st.error(f"Error al procesar tablero: {e}")
+    st.error(f"Error al procesar datos: {e}")
