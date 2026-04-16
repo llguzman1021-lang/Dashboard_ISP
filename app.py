@@ -84,10 +84,10 @@ with st.sidebar:
     st.write("---")
     st.write("⏱️ **Ventana Temporal de Inicio**")
     
-    # NUEVA DISPOSICIÓN: Fecha izquierda (Caja corta), Opciones de hora derecha.
+    # ESTRUCTURA CORREGIDA: Columna 1 (Fecha arriba, Pregunta abajo) | Columna 2 (La hora emerge paralela a la fecha)
     c1, c2 = st.columns(2)
     f_i = c1.date_input("🗓️ Fecha de Inicio")
-    conoce_h_i = c2.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
+    conoce_h_i = c1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
     
     if conoce_h_i == "Sí":
         h_i = c2.time_input("🕒 Hora de Apertura")
@@ -100,7 +100,7 @@ with st.sidebar:
     
     c_c1, c_c2 = st.columns(2)
     f_f = c_c1.date_input("🗓️ Fecha de Cierre")
-    conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
+    conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
     
     if conoce_h_f == "Sí":
         h_f = c_c2.time_input("🕒 Hora de Cierre")
