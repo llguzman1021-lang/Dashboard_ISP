@@ -98,23 +98,21 @@ with st.sidebar:
         st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
         
         c_c1, c_c2 = st.columns(2)
-        conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
-        conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
-        
-        st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
-        
-        c3, c4 = st.columns(2)
-        final_f = "N/A"
-        final_h = "N/A"
-        duracion = 0
-        desc_conocimiento = "Total"
 
-        if conoce_f_f == "Sí" and conoce_h_f == "Sí":
-            f_f = c3.date_input("🗓️ Fecha de Cierre")
-            h_f = c4.time_input("🕒 Hora de Cierre")
-            final_f = f_f.strftime("%d/%m/%Y")
-            final_h = h_f.strftime("%H:%M:%S")
-            desc_conocimiento = "Total"
+# Fecha SIEMPRE obligatoria
+f_f = c_c1.date_input("🗓️ Fecha de Cierre")
+
+# Solo control de hora
+conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
+
+st.info("ℹ️ Si selecciona 'No' en hora, el sistema registrará 'N/A' y la duración como 0h.")
+
+c3, c4 = st.columns(2)
+
+final_f = f_f.strftime("%d/%m/%Y")
+final_h = "N/A"
+duracion = 0
+desc_conocimiento = "Total"
             
             try:
                 if conoce_h_i == "Sí":
