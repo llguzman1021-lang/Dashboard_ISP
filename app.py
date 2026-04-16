@@ -3,7 +3,7 @@ import pandas as pd
 import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import plotly.express as px
-from datetime import datetime
+from datetime import datetime, calendar
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -73,71 +73,55 @@ with st.sidebar:
     st.header("📋 Reporte de Incidencias NOC")
     with st.form("registro_falla", clear_on_submit=True):
         zona = st.text_input("📍 Localización del Nodo/Zona")
-        
         c_serv1, c_serv2 = st.columns([2, 3])
         servicio = c_serv1.selectbox("📡 Servicio Afectado", ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"])
         categoria = c_serv2.selectbox("👥 Segmentación de Impacto", ["Red Multinet (Troncal)", "Cliente Corporativo"])
-        
         equipo = st.selectbox("⚙️ Equipamiento Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
         
         st.write("---")
-        st.write("⏱️ **Ventana Temporal de Apertura**")
+        st.write("⏱️ **Apertura**")
         f_i = st.date_input("🗓️ Fecha de Inicio")
         conoce_h_i = st.radio("🕒 ¿Conoce Hora de Apertura?", ["Sí", "No"], horizontal=True, key="h_i_check")
-        
         h_i_final = "N/A"
         if conoce_h_i == "Sí":
             h_i_val = st.time_input("🕒 Hora de Apertura")
             h_i_final = h_i_val.strftime("%H:%M:%S")
 
         st.write("---")
-        st.write("📉 **Estado de Cierre**")
+        st.write("📉 **Cierre**")
         f_f = st.date_input("🗓️ Fecha de Cierre")
         conoce_h_f = st.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True, key="h_f_check")
-        
         h_f_final = "N/A"
         if conoce_h_f == "Sí":
             h_f_val = st.time_input("🕒 Hora de Cierre")
             h_f_final = h_f_val.strftime("%H:%M:%S")
         
-        # Lógica de cálculo y descripción de conocimiento
         duracion = 0
         desc_conocimiento = "Ninguno"
-        
         if conoce_h_i == "Sí" and conoce_h_f == "Sí":
             try:
                 dt_i = datetime.combine(f_i, h_i_val)
                 dt_f = datetime.combine(f_f, h_f_val)
                 duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                if duracion < 0:
-                    st.error("Error: El cierre no puede ser anterior al inicio.")
-                    duracion = 0
+                if duracion < 0: duracion = 0
                 desc_conocimiento = "Total"
             except: pass
         elif conoce_h_i == "Sí" or conoce_h_f == "Sí":
-            desc_conocimiento = "Parcial (Solo una hora)"
+            desc_conocimiento = "Parcial"
         
         st.write("---")
         clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
-        causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
-            "Corte de Fibra Óptica", "Inestabilidad Suministro Eléctrico", 
-            "Desajuste de Configuración", "Vandalismo / Sabotaje", 
-            "Degradación de Hardware", "Condiciones Atmosféricas Adversas",
-            "Daños por Fauna Sinantrópica"
-        ])
-        desc = st.text_area("📝 Detalles Técnicos / Descripción")
+        causa = st.selectbox("🔍 Diagnóstico Causa Raíz", ["Corte de Fibra Óptica", "Inestabilidad Suministro Eléctrico", "Desajuste de Configuración", "Vandalismo / Sabotaje", "Degradación de Hardware", "Condiciones Atmosféricas Adversas", "Daños por Fauna Sinantrópica"])
+        desc = st.text_area("📝 Detalles Técnicos")
         
         if st.form_submit_button("Guardar Registro Operativo"):
-            nueva_fila = [
-                zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), h_i_final, 
-                f_f.strftime("%d/%m/%Y"), h_f_final, int(clientes), causa, desc, duracion, desc_conocimiento
-            ]
+            nueva_fila = [zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), h_i_final, f_f.strftime("%d/%m/%Y"), h_f_final, int(clientes), causa, desc, duracion, desc_conocimiento]
             sheet.append_row(nueva_fila)
-            st.toast("✅ Base de datos operativa actualizada")
+            st.toast("✅ Registro guardado")
             time.sleep(1)
             st.rerun()
 
-# --- PROCESAMIENTO Y ANALÍTICA DE DATOS ---
+# --- PROCESAMIENTO Y ANALÍTICA ---
 try:
     records = sheet.get_all_records()
     if records:
@@ -145,116 +129,84 @@ try:
         df_total['gsheet_id'] = range(2, len(df_total) + 2)
         df_total['Fecha_Convertida'] = pd.to_datetime(df_total['Fecha_Inicio'], dayfirst=True, errors='coerce')
         df_total['Mes_Nombre'] = df_total['Fecha_Convertida'].dt.month.map(lambda x: meses_nombres[int(x)-1] if pd.notnull(x) else None)
-
         df_mes = df_total[df_total['Mes_Nombre'] == mes_seleccionado].copy()
 
         st.title(f"📊 Dashboard Operacional NOC: {mes_seleccionado} {datetime.now().year}")
 
         if not df_mes.empty:
-            # --- KPIs ESTRATÉGICOS ACTUALIZADOS ---
-            k_mttr, k_imp, k_max, k_down = st.columns(4)
+            # --- KPIs ESTRATÉGICOS ---
+            k_mttr, k_imp, k_down, k_sla = st.columns(4)
             df_mttr = df_mes[df_mes['Duracion_Horas'] > 0]
             avg_mttr = df_mttr['Duracion_Horas'].mean() if not df_mttr.empty else 0
+            downtime_total = df_mes['Duracion_Horas'].sum()
+            
+            # Cálculo de SLA%
+            num_mes = meses_nombres.index(mes_seleccionado) + 1
+            horas_mes = calendar.monthrange(datetime.now().year, num_mes)[1] * 24
+            sla_val = max(0, ((horas_mes - downtime_total) / horas_mes) * 100)
             
             k_mttr.metric("⏱️ MTTR (Promedio)", f"{avg_mttr:.2f} horas")
             k_imp.metric("👥 Impacto Acumulado", f"{int(df_mes['Clientes_Afectados'].sum())} clientes")
-            k_max.metric("🚨 Máxima Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas")
-            k_down.metric("⏳ Downtime Total", f"{df_mes['Duracion_Horas'].sum():.2f} horas")
+            k_down.metric("⏳ Downtime Total", f"{downtime_total:.2f} horas")
+            k_sla.metric("🎯 Disponibilidad SLA", f"{sla_val:.3f}%", help="Cálculo basado en horas totales del mes vs horas de indisponibilidad.")
 
-            # Gráfica de Servicio
+            # Gráficas
             st.write("---")
-            df_serv = df_mes.groupby('Servicio').size().reset_index(name='Total_Eventos')
-            fig_serv_kpi = px.bar(df_serv, x='Total_Eventos', y='Servicio', orientation='h',
-                                title="📡 <b>Composición por Servicio Afectado</b>",
-                                labels={'Total_Eventos': 'Total de Eventos NOC', 'Servicio': ''},
-                                text_auto=True, template="plotly_dark", color='Servicio', color_discrete_sequence=['#0068c9', '#ff9f43', '#27ae60'])
-            st.plotly_chart(fig_serv_kpi, use_container_width=True)
+            df_serv = df_mes.groupby('Servicio').size().reset_index(name='Total')
+            st.plotly_chart(px.bar(df_serv, x='Total', y='Servicio', orientation='h', title="📡 Composición por Servicio", template="plotly_dark", color='Servicio'), use_container_width=True)
 
-            # Tendencia Temporal
             st.divider()
-            df_trend = df_mes.groupby('Fecha_Convertida').size().reset_index(name='Total_Eventos')
-            fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Total_Eventos', 
-                                title="📊 <b>Análisis de Estabilidad de Red (Día a Día)</b>",
-                                template="plotly_dark")
-            fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
-            st.plotly_chart(fig_trend, use_container_width=True)
-
-            # Composición Cartera
-            fig_pie = px.pie(df_mes, names='Categoria', title="📂 <b>Composición de Cartera Afectada</b>", 
-                            hole=0.6, template="plotly_dark", color_discrete_sequence=['#0068c9', '#ff4b4b'])
-            st.plotly_chart(fig_pie, use_container_width=True)
+            df_trend = df_mes.groupby('Fecha_Convertida').size().reset_index(name='Eventos')
+            st.plotly_chart(px.area(df_trend, x='Fecha_Convertida', y='Eventos', title="📊 Análisis de Estabilidad (Día a Día)", template="plotly_dark").update_traces(line_color='#0068c9'), use_container_width=True)
             
-            # 3. Top Zonas Críticas (ACTUALIZADO DETALLE DE HORAS)
+            # Zonas Críticas con detalle de horas
             top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
-            top_zonas.columns = ['Zona', 'Horas Offline']
-            fig_bar = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
-                             title="📈 <b>Puntos Críticos de Indisponibilidad</b><br><sup>Cantidad de horas de afectación acumulada por cada zona</sup>",
-                             labels={'Horas Offline': 'Cantidad de horas de afectación'},
-                             text_auto='.2f', template="plotly_dark", color='Horas Offline', color_continuous_scale='Blues')
-            fig_bar.update_layout(coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'})
-            st.plotly_chart(fig_bar, use_container_width=True)
+            st.plotly_chart(px.bar(top_zonas, x='Duracion_Horas', y='Zona', orientation='h', title="📈 Puntos Críticos: Cantidad de horas de afectación", labels={'Duracion_Horas': 'Cantidad de horas de afectación'}, template="plotly_dark", color='Duracion_Horas'), use_container_width=True)
 
-            # --- BITÁCORA ---
+            # --- BITÁCORA CON EDICIÓN Y DESCARGA ---
             st.divider()
-            st.subheader(f"🔍 Gestión de Bitácora: {mes_seleccionado}")
+            st.subheader(f"🔍 Auditoría y Gestión: {mes_seleccionado}")
             df_display = df_mes.copy()
             df_display.insert(0, "Seleccionar", False)
-            
-            conoce_opciones = ["Total", "Parcial (Solo una hora)", "Ninguno"]
             
             edited_df = st.data_editor(
                 df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre']),
                 column_config={
-                    "Seleccionar": st.column_config.CheckboxColumn(default=False), 
+                    "Seleccionar": st.column_config.CheckboxColumn(default=False),
                     "gsheet_id": None,
-                    "Duracion_Horas": st.column_config.NumberColumn("Duración (horas)", disabled=True, format="%.2f"),
-                    "Conocimiento_Tiempos": st.column_config.SelectboxColumn("Tipo Conocimiento", options=conoce_opciones)
+                    "Duracion_Horas": st.column_config.NumberColumn("Duración (horas)", disabled=True, format="%.2f")
                 },
                 use_container_width=True, hide_index=True, key="main_editor"
             )
 
-            # Sincronización
-            original_data = df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre', 'Seleccionar'])
-            edited_data = edited_df.drop(columns=['Seleccionar'])
-            
-            if not original_data.equals(edited_data):
-                if st.button("💾 Sincronizar Ediciones Operativas"):
-                    for i in range(len(original_data)):
-                        if not original_data.iloc[i].equals(edited_data.iloc[i]):
-                            fila = edited_data.iloc[i].copy()
-                            row_idx = int(fila['gsheet_id'])
-                            
-                            # Recálculo inteligente
-                            try:
-                                if str(fila['Hora_Inicio']) != "N/A" and str(fila['Hora_Fin']) != "N/A":
-                                    dt_ini = datetime.strptime(f"{fila['Fecha_Inicio']} {fila['Hora_Inicio']}", "%d/%m/%Y %H:%M:%S")
-                                    dt_fin = datetime.strptime(f"{fila['Fecha_Fin']} {fila['Hora_Fin']}", "%d/%m/%Y %H:%M:%S")
-                                    fila['Duracion_Horas'] = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
-                                else:
-                                    fila['Duracion_Horas'] = 0
-                            except: fila['Duracion_Horas'] = 0
-
-                            row_values = [str(x) if not isinstance(x, (int, float)) else x for x in fila.drop('gsheet_id').tolist()]
-                            sheet.update(f"A{row_idx}:M{row_idx}", [row_values])
-                    
-                    st.success("✅ Sincronización completa.")
+            # Botones de Acción
+            c_btn1, c_btn2 = st.columns(2)
+            if not edited_df.drop(columns=['Seleccionar']).equals(df_display.drop(columns=['Seleccionar', 'Fecha_Convertida', 'Mes_Nombre'])):
+                if c_btn1.button("💾 Sincronizar Cambios"):
+                    for i in range(len(edited_df)):
+                        fila = edited_df.iloc[i]
+                        row_idx = int(fila['gsheet_id'])
+                        row_values = [str(x) if not isinstance(x, (int, float)) else x for x in fila.drop(['Seleccionar', 'gsheet_id']).tolist()]
+                        sheet.update(f"A{row_idx}:M{row_idx}", [row_values])
+                    st.success("Sincronizado")
                     time.sleep(1)
                     st.rerun()
 
-            # Lógica Eliminar
-            filas_eliminar = edited_df[edited_df["Seleccionar"] == True]
-            if not filas_eliminar.empty:
-                if st.button(f"🗑️ Confirmar Borrado ({len(filas_eliminar)})"):
-                    indices = sorted(filas_eliminar['gsheet_id'].tolist(), reverse=True)
-                    for idx in indices: sheet.delete_rows(idx)
-                    st.success("✅ Registros eliminados.")
-                    time.sleep(1)
-                    st.rerun()
+            csv_m = df_mes.drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
+            c_btn2.download_button(f"📥 Descargar Bitácora {mes_seleccionado}", csv_m, f"Bitacora_{mes_seleccionado}.csv", "text/csv")
 
+        # --- HISTÓRICO ---
+        st.divider()
+        st.header("📂 Repositorio Histórico")
+        meses_con_datos = [m for m in meses_nombres if m in df_total['Mes_Nombre'].unique() and m != mes_seleccionado]
+        if meses_con_datos:
+            for m in meses_con_datos:
+                with st.expander(f"📁 Ciclo: {m}"):
+                    df_h = df_total[df_total['Mes_Nombre'] == m].drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre'])
+                    st.dataframe(df_h, use_container_width=True, hide_index=True)
+                    st.download_button(f"Exportar {m}", df_h.to_csv(index=False).encode('utf-8'), f"NOC_{m}.csv", "text/csv", key=f"dl_{m}")
         else:
-            st.info(f"Sin registros para {mes_seleccionado}.")
+            st.info("No hay otros meses con datos.")
 
-    else:
-        st.info("Base de datos vacía.")
-except Exception as e:
-    st.error(f"Error en el procesamiento: {e}")
+    else: st.info("Base de datos vacía.")
+except Exception as e: st.error(f"Error: {e}")
