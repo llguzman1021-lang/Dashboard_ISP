@@ -88,13 +88,10 @@ try:
     records = sheet.get_all_records()
     if records:
         df_total = pd.DataFrame(records)
-        # ID para gestión de filas en Google Sheets
         df_total['gsheet_id'] = range(2, len(df_total) + 2)
         df_total['Fecha_Convertida'] = pd.to_datetime(df_total['Fecha_Inicio'], dayfirst=True, errors='coerce')
-        # Extraer nombre del mes para agrupamiento
         df_total['Mes_Nombre'] = df_total['Fecha_Convertida'].dt.month.map(lambda x: meses_nombres[int(x)-1] if pd.notnull(x) else None)
 
-        # 1. Filtrado para el Dashboard Principal (Mes seleccionado)
         df_mes = df_total[df_total['Mes_Nombre'] == mes_seleccionado].copy()
 
         st.title(f"📊 Dashboard NOC: {mes_seleccionado} {datetime.now().year}")
@@ -109,10 +106,26 @@ try:
 
             # --- GRÁFICAS ---
             st.divider()
+            # 1. Tendencia Temporal
             fig_trend = px.line(df_mes.groupby('Fecha_Convertida').size().reset_index(name='Cant'), 
                                 x='Fecha_Convertida', y='Cant', title="Tendencia de Fallas", markers=True, template="plotly_dark")
             fig_trend.update_traces(line_color='#0068c9')
             st.plotly_chart(fig_trend, use_container_width=True)
+
+            # 2. Distribución y Top Zonas
+            col_g1, col_g2 = st.columns(2)
+            
+            with col_g1:
+                fig_pie = px.pie(df_mes, names='Categoria', title="Distribución por Categoría", 
+                                 hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Safe)
+                st.plotly_chart(fig_pie, use_container_width=True)
+            
+            with col_g2:
+                top_zonas = df_mes['Zona'].value_counts().nlargest(5).reset_index()
+                top_zonas.columns = ['Zona', 'Fallas']
+                fig_bar = px.bar(top_zonas, x='Zona', y='Fallas', title="Top 5 Zonas con más Fallas",
+                                 text_auto=True, template="plotly_dark", color='Fallas', color_continuous_scale='Blues')
+                st.plotly_chart(fig_bar, use_container_width=True)
 
             # --- BITÁCORA DEL MES (CON ELIMINACIÓN) ---
             st.subheader(f"🔍 Gestión de Registros: {mes_seleccionado}")
@@ -120,7 +133,6 @@ try:
             df_display = df_mes.copy()
             df_display.insert(0, "Seleccionar", False)
             
-            # Editor configurado: solo permite seleccionar el Checkbox, no editar datos ni agregar filas
             edited_df = st.data_editor(
                 df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre']),
                 column_config={
@@ -130,7 +142,7 @@ try:
                 disabled=[c for c in df_display.columns if c != "Seleccionar"],
                 use_container_width=True,
                 hide_index=True,
-                num_rows="fixed", # Impide agregar filas desde la tabla
+                num_rows="fixed",
                 key="main_editor"
             )
 
@@ -145,7 +157,6 @@ try:
                     time.sleep(1)
                     st.rerun()
             
-            # Botón de Descarga para el mes actual
             csv_m = df_mes.drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
             st.download_button(label=f"📥 Descargar CSV {mes_seleccionado}", data=csv_m, 
                                file_name=f"Reporte_{mes_seleccionado}.csv", mime='text/csv')
@@ -153,22 +164,19 @@ try:
         else:
             st.info(f"No hay registros encontrados para el mes de {mes_seleccionado}.")
 
-        # --- SECCIÓN: ARCHIVO HISTÓRICO (OTROS MESES) ---
+        # --- SECCIÓN: ARCHIVO HISTÓRICO ---
         st.divider()
         st.header("📂 Histórico de Otros Meses")
         
-        # Filtrar meses que tienen datos pero no son el seleccionado actualmente
         meses_con_datos = [m for m in meses_nombres if m in df_total['Mes_Nombre'].unique()]
         otros_meses = [m for m in meses_con_datos if m != mes_seleccionado]
         
         if otros_meses:
             for mes in otros_meses:
                 with st.expander(f"📁 Bitácora de {mes}"):
-                    # Mostrar tabla solo lectura
                     df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre'])
                     st.dataframe(df_hist, use_container_width=True, hide_index=True)
                     
-                    # Descarga específica por mes
                     csv_h = df_hist.to_csv(index=False).encode('utf-8')
                     st.download_button(label=f"Descargar CSV {mes}", data=csv_h, 
                                        file_name=f"Historico_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
