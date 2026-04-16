@@ -86,70 +86,60 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
 
-        # MODIFICACIÓN 1: Opción de conocer hora de inicio
-        conoce_h_i = st.radio("🕒 ¿Conoce Hora de Apertura?", ["Sí", "No"], horizontal=True)
-        if conoce_h_i == "Sí":
-            h_i = c2.time_input("🕒 Hora de Apertura")
-            hora_inicio_final = h_i.strftime("%H:%M:%S")
+       # --- INICIO ---
+st.write("⏱️ **Ventana Temporal de Inicio**")
+c1, c2 = st.columns(2)
+
+f_i = c1.date_input("🗓️ Fecha de Inicio")
+
+h_i = c2.time_input("🕒 Hora de Apertura (Opcional)", value=None)
+if h_i:
+    hora_inicio_final = h_i.strftime("%H:%M:%S")
+else:
+    hora_inicio_final = "N/A"
+
+st.write("---")
+st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
+
+c3, c4 = st.columns(2)
+
+f_f = c3.date_input("🗓️ Fecha de Cierre")
+
+h_f = c4.time_input("🕒 Hora de Cierre (Opcional)", value=None)
+
+# Valores por defecto
+final_f = f_f.strftime("%d/%m/%Y")
+final_h = "N/A"
+duracion = 0
+desc_conocimiento = "Parcial"
+
+# Procesamiento
+try:
+    if h_f:
+        final_h = h_f.strftime("%H:%M:%S")
+
+    # SOLO calcular duración si ambas horas existen
+    if h_i and h_f:
+        dt_i = datetime.combine(f_i, h_i)
+        dt_f = datetime.combine(f_f, h_f)
+
+        duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+
+        if duracion < 0:
+            st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
+            duracion = 0
+            final_h = "N/A"
+            desc_conocimiento = "N/A"
         else:
-            hora_inicio_final = "N/A"
-
-        st.write("---")
-        st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
-        
-        c_c1, c_c2 = st.columns(2)
-        conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
-        conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
-        
-        st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
-        
-        c3, c4 = st.columns(2)
-        final_f = "N/A"
-        final_h = "N/A"
-        duracion = 0
-        desc_conocimiento = "Total"
-
-        if conoce_f_f == "Sí" and conoce_h_f == "Sí":
-            f_f = c3.date_input("🗓️ Fecha de Cierre")
-            h_f = c4.time_input("🕒 Hora de Cierre")
-            final_f = f_f.strftime("%d/%m/%Y")
-            final_h = h_f.strftime("%H:%M:%S")
             desc_conocimiento = "Total"
-            
-            try:
-                if conoce_h_i == "Sí":
-                    dt_i = datetime.combine(f_i, h_i)
-                    dt_f = datetime.combine(f_f, h_f)
-                    duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                    if duracion < 0:
-                        st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
-                        duracion = 0
-                        final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
-                else:
-                    duracion = 0
-            except:
-                duracion = 0
-                final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
-        
-        elif conoce_f_f == "Sí" and conoce_h_f == "No":
-            f_f = c3.date_input("🗓️ Fecha de Cierre")
-            final_f = f_f.strftime("%d/%m/%Y")
-            final_h = "N/A"
-            duracion = 0
-            desc_conocimiento = "Parcial (Solo Fecha)"
+    else:
+        duracion = 0
+        desc_conocimiento = "Parcial"
 
-        elif conoce_f_f == "No" and conoce_h_f == "Sí":
-            h_f = c4.time_input("🕒 Hora de Cierre")
-            final_f = "N/A"
-            final_h = h_f.strftime("%H:%M:%S")
-            duracion = 0
-            desc_conocimiento = "Parcial (Solo Hora)"
-        
-        else:
-            final_f = "N/A"
-            final_h = "N/A"
-            duracion = 0
-            desc_conocimiento = "Ninguno"
+except Exception:
+    duracion = 0
+    final_h = "N/A"
+    desc_conocimiento = "N/A"
 
         st.write("---")
         clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
