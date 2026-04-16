@@ -31,6 +31,7 @@ st.markdown("""
     <style>
     div.stButton > button:first-child { background-color: #0068c9; color: white; border-radius: 10px; width: 100%; font-weight: bold; }
     [data-testid="stMetricLabel"] { color: #ffffff !important; }
+    .stAlert { border-radius: 10px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -38,7 +39,6 @@ st.markdown("""
 with st.sidebar:
     st.title("⚙️ Panel de Control")
     
-    # Filtro de Mes para el Dashboard
     mes_actual_num = datetime.now().month
     mes_seleccionado = st.selectbox("📅 Seleccionar Mes de Análisis", 
                                     ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
@@ -61,10 +61,8 @@ with st.sidebar:
         h_f = c4.time_input("🕒 Hora Fin")
         
         sin_hora = st.checkbox("❓ Sin hora/fecha exacta de fin")
-        
         clientes = st.number_input("👥 Cantidad Clientes", min_value=0, step=1)
         sin_clientes = st.checkbox("❓ Sin dato exacto de clientes")
-        
         causa = st.selectbox("🔎 Causa Raíz", ["Corte Fibra", "Falla Eléctrica", "Configuración", "Vandalismo", "Hardware"])
         desc = st.text_area("📄 Descripción")
         
@@ -90,12 +88,10 @@ try:
     records = sheet.get_all_records()
     if records:
         df = pd.DataFrame(records)
-        # Mantener el índice original para poder borrar correctamente en Google Sheets
-        df['gsheet_row'] = df.index + 2  # +2 porque gspread es base 1 y la fila 1 es el encabezado
-        
+        # Guardamos la posición real de la fila en Google Sheets (base 1 + encabezado)
+        df['gsheet_id'] = range(2, len(df) + 2)
         df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
         
-        # Filtrado por Mes Seleccionado
         meses_dict = {"Enero":1, "Febrero":2, "Marzo":3, "Abril":4, "Mayo":5, "Junio":6, 
                       "Julio":7, "Agosto":8, "Septiembre":9, "Octubre":10, "Noviembre":11, "Diciembre":12}
         df_mes = df[df['Fecha_Convertida'].dt.month == meses_dict[mes_seleccionado]].copy()
@@ -105,7 +101,6 @@ try:
         if not df_mes.empty:
             # --- SECCIÓN 1: KPIs ---
             k1, k2, k3, k4 = st.columns(4)
-            
             avg_duracion = df_mes['Duracion_Horas'].mean()
             total_impacto = df_mes['Clientes_Afectados'].sum()
             caida_critica = df_mes['Duracion_Horas'].max()
@@ -116,7 +111,7 @@ try:
             k3.metric("🚨 Caída más Crítica", f"{caida_critica:.2f} Horas")
             k4.metric("⏳ Duración Acumulada", f"{duracion_total:.2f} Horas")
 
-            # --- SECCIÓN 2: GRÁFICAS VERTICALES ---
+            # --- SECCIÓN 2: GRÁFICAS ---
             st.divider()
             st.subheader("📈 Volumen Mensual de Fallas")
             fig_trend = px.line(df_mes.groupby('Fecha_Convertida').size().reset_index(name='Cant'), 
@@ -124,56 +119,51 @@ try:
             fig_trend.update_traces(line_color='#0068c9')
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            st.subheader("📂 Distribución por Categoría")
-            fig_pie = px.pie(df_mes, names="Categoria", hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Pastel)
-            st.plotly_chart(fig_pie, use_container_width=True)
-
-            st.subheader("🛠️ Inactividad Acumulada por Equipo")
-            fig_bar = px.bar(df_mes.groupby('Equipo_Afectado')['Duracion_Horas'].sum().reset_index(), 
-                             x="Equipo_Afectado", y="Duracion_Horas", template="plotly_dark", color="Equipo_Afectado")
-            st.plotly_chart(fig_bar, use_container_width=True)
-
-            # --- SECCIÓN 3: BITÁCORA INTERACTIVA CON OPCIÓN DE ELIMINAR ---
+            # --- SECCIÓN 3: BITÁCORA INTERACTIVA ---
             st.divider()
             st.subheader("🔍 Bitácora e Historial")
-            st.info("💡 Para eliminar: Selecciona la fila y presiona la tecla 'Supr' (Delete) o usa el icono de papelera. Luego presiona el botón 'Confirmar Cambios'.")
             
-            # Filtro de búsqueda interactivo
-            busqueda = st.text_input("Filtrar por Zona, Equipo o Causa:", "")
-            df_mostrar = df_mes.copy()
+            # Filtro de búsqueda
+            busqueda = st.text_input("Filtrar por palabra clave:", "")
+            df_display = df_mes.copy()
             if busqueda:
-                df_mostrar = df_mostrar[df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
+                df_display = df_display[df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
 
-            # Editor de datos interactivo
-            # No mostramos la columna técnica 'gsheet_row' ni 'Fecha_Convertida'
-            columnas_visibles = [c for c in df_mostrar.columns if c not in ['gsheet_row', 'Fecha_Convertida']]
+            # Agregamos columna de selección al inicio
+            df_display.insert(0, "Seleccionar", False)
             
+            # Configuramos el editor para que solo la columna "Seleccionar" sea editable
             edited_df = st.data_editor(
-                df_mostrar[ ['gsheet_row'] + columnas_visibles ], 
-                column_config={"gsheet_row": None}, # Ocultar columna de ID técnico
+                df_display.drop(columns=['Fecha_Convertida']),
+                column_config={
+                    "Seleccionar": st.column_config.CheckboxColumn(help="Selecciona para eliminar", default=False),
+                    "gsheet_id": None # Ocultamos el ID técnico
+                },
+                disabled=[c for c in df_display.columns if c != "Seleccionar"], # Bloquea el resto de columnas
                 use_container_width=True,
-                num_rows="dynamic", # Permite borrar filas
-                key="editor_bitacora"
+                hide_index=True,
+                key="tabla_bitacora"
             )
 
-            # Lógica para confirmar eliminación
-            if st.button("⚠️ Confirmar Cambios / Eliminar Filas"):
-                # Identificar filas que fueron borradas comparando el DF original con el editado
-                rows_remaining = edited_df['gsheet_row'].tolist()
-                rows_to_delete = [r for r in df_mostrar['gsheet_row'].tolist() if r not in rows_remaining]
-                
-                if rows_to_delete:
-                    # Ordenar de mayor a menor para no arruinar los índices al borrar
-                    for row_idx in sorted(rows_to_delete, reverse=True):
-                        sheet.delete_rows(row_idx)
-                    st.success(f"Se eliminaron {len(rows_to_delete)} registros correctamente.")
+            # Lógica de eliminación
+            filas_para_eliminar = edited_df[edited_df["Seleccionar"] == True]
+
+            if not filas_para_eliminar.empty:
+                st.warning(f"⚠️ Has seleccionado {len(filas_para_eliminar)} registro(s) para eliminar.")
+                if st.button("Confirmar Eliminación Permanente"):
+                    # Ordenar de mayor a menor para no alterar los índices de las filas restantes al borrar
+                    indices_a_borrar = sorted(filas_para_eliminar['gsheet_id'].tolist(), reverse=True)
+                    
+                    with st.spinner("Eliminando registros..."):
+                        for idx in indices_a_borrar:
+                            sheet.delete_rows(idx)
+                    
+                    st.success("Registros eliminados correctamente.")
                     time.sleep(1)
                     st.rerun()
-                else:
-                    st.warning("No se detectaron cambios para eliminar.")
             
             # Botón de Descarga
-            csv = df_mes.drop(columns=['gsheet_row', 'Fecha_Convertida']).to_csv(index=False).encode('utf-8')
+            csv = df_mes.drop(columns=['gsheet_id', 'Fecha_Convertida']).to_csv(index=False).encode('utf-8')
             st.download_button(label="📥 Descargar Reporte Mensual (CSV)", data=csv, 
                                file_name=f"NOC_Report_{mes_seleccionado}.csv", mime='text/csv')
         else:
