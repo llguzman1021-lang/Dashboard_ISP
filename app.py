@@ -101,8 +101,8 @@ st.markdown("""
 
 # --- SIDEBAR: GESTIÓN OPERATIVA ---
 with st.sidebar:
-    st.title("🛡️ Centro de Operaciones")
-    st.caption("Panel de Control Multinet | v3.1 NOC")
+    st.title("🏢 Centro de Operaciones de Red (NOC)")
+    st.caption("Panel de Control Gerencial Multinet | v3.3")
     
     meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
                      "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -111,22 +111,22 @@ with st.sidebar:
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=mes_actual_num-1)
     
     st.divider()
-    st.header("📋 Reporte de Incidencias NOC")
+    st.header("📋 Formulario de Incidencias Operativas")
     
-    zona = st.text_input("📍 Localización del Nodo/Zona")
+    zona = st.text_input("📍 Ubicación de la Incidencia (Nodo o Zona)")
     
     c_serv1, c_serv2 = st.columns([2, 3])
-    servicio = c_serv1.selectbox("📡 Servicio Afectado", ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"])
-    categoria = c_serv2.selectbox("👥 Segmentación de Impacto", ["Red Multinet (Troncal)", "Cliente Corporativo"])
+    servicio = c_serv1.selectbox("🌐 Servicio Principal Afectado", ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"])
+    categoria = c_serv2.selectbox("🏢 Segmento de Mercado", ["Red Multinet (Troncal)", "Cliente Corporativo"])
     
-    equipo = st.selectbox("⚙️ Equipamiento Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
+    equipo = st.selectbox("🖥️ Equipamiento de Red Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
     
     st.write("---")
-    st.write("⏱️ **Ventana Temporal de Inicio**")
+    st.write("⏱️ **Registro de Tiempos: Inicio de Falla**")
     
     c1, c2 = st.columns(2)
-    f_i = c1.date_input("🗓️ Fecha de Inicio")
-    conoce_h_i = c1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
+    f_i = c1.date_input("📅 Fecha de Inicio")
+    conoce_h_i = c1.radio("🕒 ¿Conoce la Hora Exacta?", ["No", "Sí"], horizontal=True, key="conoce_hi")
     
     if conoce_h_i == "Sí":
         h_i = c2.time_input("🕒 Hora de Apertura")
@@ -134,14 +134,14 @@ with st.sidebar:
     else:
         hora_inicio_final = "N/A"
 
-    st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0.")
+    st.info("ℹ️ Si omite la hora, se considerará 'N/A' y la duración contable será 0 horas.")
 
     st.write("---")
-    st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
+    st.write("✅ **Registro de Tiempos: Resolución y Cierre**")
     
     c_c1, c_c2 = st.columns(2)
-    f_f = c_c1.date_input("🗓️ Fecha de Cierre")
-    conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
+    f_f = c_c1.date_input("📅 Fecha de Cierre")
+    conoce_h_f = c_c1.radio("🕒 ¿Conoce la Hora Exacta?", ["No", "Sí"], horizontal=True, key="conoce_hf")
     
     if conoce_h_f == "Sí":
         h_f = c_c2.time_input("🕒 Hora de Cierre")
@@ -149,7 +149,7 @@ with st.sidebar:
     else:
         final_h = "N/A"
 
-    st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0.")
+    st.info("ℹ️ Si omite la hora, se considerará 'N/A' y la duración contable será 0 horas.")
 
     duracion = 0
     if conoce_h_i == "Sí" and conoce_h_f == "Sí":
@@ -159,7 +159,7 @@ with st.sidebar:
             dt_f = datetime.combine(f_f, h_f)
             duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
             if duracion < 0:
-                st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
+                st.error("⚠️ Error: La fecha y hora de cierre no pueden ser anteriores a las de inicio.")
                 duracion = 0
         except:
             duracion = 0
@@ -171,19 +171,27 @@ with st.sidebar:
         desc_conocimiento = "Parcial (Falta Hora Inicio)"
 
     st.write("---")
-    clientes = st.number_input("👥 Clientes/Usuarios Afectados", min_value=0, step=1)
-    causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
-        "Corte de Fibra Óptica", 
-        "Inestabilidad Suministro Eléctrico", 
-        "Desajuste de Configuración", 
-        "Vandalismo / Sabotaje", 
-        "Degradación de Hardware",
-        "Condiciones Atmosféricas Adversas",
-        "Daños por Fauna Sinantrópica"
+    if categoria == "Cliente Corporativo":
+        clientes = 1
+        st.info("🏢 Segmento Corporativo seleccionado: El sistema contabiliza automáticamente el impacto como 1 enlace (1 cliente corporativo afectado).")
+    else:
+        clientes = st.number_input("👤 Cantidad de Clientes Afectados (Unidades)", min_value=0, step=1)
+
+    causa = st.selectbox("🛠️ Diagnóstico Técnico (Causa Raíz)", [
+        "Corte de Fibra Óptica por Terceros (Vandalismo/Accidente)",
+        "Caída de Árboles o Ramas sobre Tendido de Fibra",
+        "Interrupción de Energía Comercial (Falla Eléctrica/Tormenta)",
+        "Corrosión Salina en Equipos o Nodos (Zonas Costeras)",
+        "Daños por Fauna Silvestre o Aves (Zonas Boscosas/Rurales)",
+        "Falla de Hardware (Desgaste, Daño o Sobrecalentamiento)",
+        "Desajuste de Configuración Lógica (Software/Routing)",
+        "Mantenimiento Programado o Ventana de Trabajo",
+        "Vandalismo, Hurto o Sabotaje Directo",
+        "Condiciones Climáticas Adversas (Tormentas, Fuertes Vientos)"
     ])
-    desc = st.text_area("📝 Detalles Técnicos / Descripción")
+    desc = st.text_area("📝 Descripción Técnica y Detallada del Incidente")
     
-    if st.button("Guardar Registro Operativo"):
+    if st.button("💾 Guardar Registro Operativo"):
         meses_nombres_es = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
         nombre_pestana = f"{meses_nombres_es[f_i.month - 1]} {f_i.year}"
         
@@ -199,7 +207,7 @@ with st.sidebar:
             f_f.strftime("%d/%m/%Y"), final_h, int(clientes), causa, desc, duracion, desc_conocimiento
         ]
         target_sheet.append_row(nueva_fila)
-        st.toast(f"✅ Guardado en la pestaña '{nombre_pestana}' exitosamente")
+        st.toast(f"✅ Información almacenada exitosamente en el periodo '{nombre_pestana}'.")
         time.sleep(1)
         st.rerun()
 
@@ -320,7 +328,7 @@ try:
             if f_eqs: df_filtrado = df_filtrado[df_filtrado[COL_EQUIPO].isin(f_eqs)]
 
             if df_filtrado.empty:
-                st.warning("⚠️ No existen fallas registradas que coincidan con estos filtros.")
+                st.warning("⚠️ No existen fallas registradas que coincidan con los filtros seleccionados.")
             else:
                 mes_index = meses_nombres.index(mes_seleccionado) + 1
                 anio_actual = datetime.now().year
@@ -357,37 +365,37 @@ try:
                 st.write("---")
                 # Fila 1
                 k1, k2, k3 = st.columns(3)
-                k1.metric("⏱️ Tiempo Promedio Resolución", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse", help="Promedio de horas que toma reparar el servicio tras la falla.")
-                k2.metric("👥 Clientes Interrumpidos", f"{cl_imp} clientes", help="Cantidad de usuarios totales. Nota: Esta es una métrica estimada; si no hubo cuantificación exacta en terreno, el volumen difiere de la realidad.")
-                k3.metric("⏳ Afectación Total en Días", f"{dias_totales:.2f} días", delta=delta_dias, delta_color="inverse", help="La suma global de todas las desconexiones pasada a proporción de días enteros.")
+                k1.metric("⏱️ Tiempo Promedio de Resolución (MTTR)", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse", help="Promedio de horas empleadas para reparar el servicio tras la notificación de la falla.")
+                k2.metric("👥 Total de Clientes Interrumpidos", f"{cl_imp} clientes", help="Cantidad consolidada de usuarios que experimentaron cortes de servicio. (Nota: Estimación en casos sin telemetría exacta).")
+                k3.metric("⏳ Impacto Operativo Acumulado", f"{dias_totales:.2f} días", delta=delta_dias, delta_color="inverse", help="Sumatoria global del tiempo de desconexión expresado en la equivalencia de días enteros.")
                 
                 # Fila 2
                 st.write("") # Pequeño separador visual 
                 k4, k5, k6 = st.columns(3)
-                k4.metric("🛑 Peor Falla Individual", f"{max_h:.2f} horas", help="La duración en horas del incidente más severo del mes.")
-                k5.metric("✅ Porcentaje Disponibilidad", f"{sla_porcentaje:.2f}%", delta=delta_s, delta_color="normal", help="Nivel integral de servicio operativo (Excluyendo cortes solapados al mismo tiempo).")
-                k6.metric("📉 Promedio de Afectación", f"{acd_horas:.2f} horas/cliente", delta=delta_a, delta_color="inverse", help="Cantidad promedio estadística de horas que un cliente común experimentó caída de internet.")
+                k4.metric("🛑 Duración de la Falla Más Crítica", f"{max_h:.2f} horas", help="La duración en horas del incidente más severo y prolongado registrado en este periodo mensual.")
+                k5.metric("📈 Porcentaje de Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, delta_color="normal", help="Nivel integral de servicio operativo (Service Level Agreement) basado en las horas del mes.")
+                k6.metric("📉 Promedio de Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas / cliente", delta=delta_a, delta_color="inverse", help="Promedio estadístico de horas continuas en las que un cliente experimentó interrupción de servicio (Afectación Promedio).")
                 
-                st.caption("ℹ️ **Nota Técnica sobre Población Afectada:** Las cantidades de usuarios interrumpidos listadas en estos tableros son *estimaciones operacionales*. Estos valores se registran solo si el personal validó exactamente la cifra en el lugar; en registros sin telemetría exacta (como eventos históricos generales), se computa una afectación mínima para evitar cálculos estadísticos engañosos.")
+                st.caption("ℹ️ **Nota Técnica sobre Cuantificación:** Las cifras de usuarios interrumpidos presentadas son aproximaciones estadísticas. Aquellos registros carentes de telemetría o precisión exacta (típicamente eventos históricos) se computan con un impacto base para no sesgar drásticamente el análisis global de horas/cliente.")
 
                 # --- VISUALIZACIÓN MULTI-FACTOR (LAS NUEVAS GRÁFICAS KPI) ---
                 st.divider()
-                st.subheader(f"📈 Análisis Visual de Rendimiento Operativo")
+                st.subheader(f"📈 Análisis Visual del Rendimiento Operativo")
                 
                 # Fila 1: Motivos y Hardware (Las nuevas)
                 col_g1, col_g2 = st.columns(2)
                 
                 df_caus = df_filtrado.groupby(COL_CAUSA).size().reset_index(name='Alertas')
                 fig_rca = px.pie(df_caus, names=COL_CAUSA, values='Alertas', hole=0.5,
-                                title="🔍 <b>Motivos Principales de Fallas</b>", template="plotly_dark")
+                                title="🔍 <b>Causas Principales de las Fallas Registradas</b>", template="plotly_dark")
                 fig_rca.update_traces(textposition='inside', textinfo='percent+label', marker=dict(line=dict(color='#000000', width=1)))
                 fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
                 col_g1.plotly_chart(fig_rca, use_container_width=True)
 
                 df_req = df_filtrado.groupby(COL_EQUIPO).size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
                 fig_eq = px.bar(df_req, x='Fallos', y=COL_EQUIPO, orientation='h', color='Fallos',
-                                title="🛠️ <b>Fallas Acumuladas por Equipamiento</b>", template="plotly_dark", color_continuous_scale="Reds")
-                fig_eq.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=60, b=0), xaxis_title="Cantidad de Fallas Registradas", yaxis_title="")
+                                title="🛠️ <b>Fallas Acumuladas por Tipo de Equipamiento</b>", template="plotly_dark", color_continuous_scale="Reds")
+                fig_eq.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=60, b=0), xaxis_title="Cantidad de Eventos (Fallas)", yaxis_title="")
                 col_g2.plotly_chart(fig_eq, use_container_width=True)
 
                 # Fila 2: Servicios y Zonas Críticas (Las viejas restauradas)
@@ -396,9 +404,9 @@ try:
                 
                 df_serv = df_filtrado.groupby('Servicio').size().reset_index(name='Total_Eventos')
                 fig_serv_kpi = px.bar(df_serv, x='Total_Eventos', y='Servicio', orientation='h',
-                                    title="📡 <b>Incidencias Acumuladas según el Servicio</b>",
+                                    title="🌐 <b>Volumen de Incidencias según el Servicio</b>",
                                     text_auto=True, template="plotly_dark", color='Servicio', color_discrete_sequence=['#0068c9', '#ff9f43', '#27ae60'])
-                fig_serv_kpi.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0), xaxis_title="Total de Caídas", yaxis_title="")
+                fig_serv_kpi.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0), xaxis_title="Total de Caídas Registradas", yaxis_title="")
                 fig_serv_kpi.update_traces(textposition='inside', textfont_size=14, marker_line_width=0)
                 col_g3.plotly_chart(fig_serv_kpi, use_container_width=True)
                 
@@ -406,7 +414,7 @@ try:
                 top_zonas.columns = ['Zona', 'Horas Offline']
                 top_zonas['Etiqueta'] = top_zonas['Horas Offline'].apply(lambda x: f"{x:.2f} horas")
                 fig_bar_zonas = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
-                                    title="📉 <b>Sectores Geográficos con Mayor Tiempo Caído</b>",
+                                    title="📉 <b>Impacto por Zona (Horas sin Servicio)</b>",
                                     text='Etiqueta', template="plotly_dark", color='Horas Offline', color_continuous_scale='Blues')
                 fig_bar_zonas.update_layout(coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=60, b=0), xaxis_title="Total de Horas sin Servicio", yaxis_title="")
                 fig_bar_zonas.update_traces(marker_line_width=0, textfont_size=13, textposition='inside')
@@ -417,8 +425,8 @@ try:
                 df_riesgo = df_filtrado.groupby('Zona').agg(Frecuencia=('gsheet_id', 'count'), Horas_Down=('Duracion_Horas', 'sum'), Afect_Totales=('Clientes_Afectados', 'sum')).reset_index()
                 if not df_riesgo.empty and df_riesgo['Afect_Totales'].sum() > 0:
                     fig_sc = px.scatter(df_riesgo, x='Frecuencia', y='Horas_Down', size='Afect_Totales', color='Zona',
-                                        title="📍 <b>Nivel de Riesgo Total: Zonas de Cobertura Problemáticas</b><br><sup>Sectores hacia arriba demoran más en arreglarse, sectores a la derecha cortan más seguido. Tamaño de burbuja = Daño real de clientes involucrados.</sup>",
-                                        labels={'Frecuencia':'Eventos de Caída', 'Horas_Down': 'Horas de Apagón Sumadas'},
+                                        title="📍 <b>Matriz de Riesgo: Desempeño Crítico por Zonas de Cobertura</b><br><sup>Nodos en el eje superior presentan tiempos de resolución prolongados. Nodos hacia la derecha sufren fallas recurrentes. El radio del círculo representa el volumen de clientes afectados.</sup>",
+                                        labels={'Frecuencia':'Cantidad de Fallas Registradas', 'Horas_Down': 'Horas Totales Caídas (Acumulado)'},
                                         template="plotly_dark")
                     fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True)
                     st.plotly_chart(fig_sc, use_container_width=True)
@@ -426,8 +434,8 @@ try:
                 st.write("")
                 df_trend = df_filtrado.groupby('Fecha_Convertida').size().reset_index(name='Total_Eventos')
                 fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Total_Eventos', 
-                                    title="📅 <b>Tendencia Diaria Temporal de Cortes</b><br><sup>Fluctuaciones y volumen de alertas registradas diariamente en este ciclo</sup>",
-                                    labels={'Fecha_Convertida': 'Fechas del Mes', 'Total_Eventos': 'Total de Fallas'},
+                                    title="📅 <b>Tendencia Diaria de Cortes Operativos</b><br><sup>Muestra la fluctuación y volumen de las incidencias registradas día a día durante este ciclo de facturación.</sup>",
+                                    labels={'Fecha_Convertida': 'Fechas del Mes', 'Total_Eventos': 'Cantidad Total de Fallas'},
                                     template="plotly_dark")
                 fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
                 st.plotly_chart(fig_trend, use_container_width=True)
@@ -435,11 +443,11 @@ try:
 
                 # --- BITÁCORA INTELIGENTE PROTEGIDA ---
                 st.divider()
-                st.subheader(f"🔍 Auditoría y Limpieza de Base de Datos")
+                st.subheader(f"🔐 Panel de Auditoría y Mantenimiento de Datos")
                 
                 col_a1, col_a2 = st.columns([3,2])
-                busqueda = col_a1.text_input("🔎 Panel de Búsqueda:", placeholder="Escriba aquí para buscar registros...")
-                pin_seguridad = col_a2.text_input("🔐 Ingreso de PIN Restringido:", type="password", placeholder="Clave Administrador (Para Editar/Borrar)")
+                busqueda = col_a1.text_input("🔎 Búsqueda de Registros:", placeholder="Escriba aquí para ubicar detalles técnicos o zonas geográficas...")
+                pin_seguridad = col_a2.text_input("🔑 Ingreso de PIN Restringido:", type="password", placeholder="Credencial de Administrador (Necesario para Editar o Eliminar)")
                 
                 acceso_autorizado = (pin_seguridad == "1010")
 
@@ -465,8 +473,8 @@ try:
                         "Hora_Inicio": st.column_config.TextColumn("H. Inicio"),
                         "Fecha_Fin": st.column_config.TextColumn("F. Cierre"),
                         "Hora_Fin": st.column_config.TextColumn("H. Cierre"),
-                        "Duracion_Horas": st.column_config.NumberColumn("Duración", disabled=True, format="%.2f"),
-                        "Conocimiento_Tiempos": st.column_config.SelectboxColumn("Tipo Conocimiento", options=conoce_opciones, required=True)
+                        "Duracion_Horas": st.column_config.NumberColumn("Duración (Horas)", disabled=True, format="%.2f"),
+                        "Conocimiento_Tiempos": st.column_config.SelectboxColumn("Nivel de Precisión del Registro", options=conoce_opciones, required=True)
                     },
                     use_container_width=True, hide_index=True, num_rows="fixed", key="main_editor"
                 )
@@ -480,17 +488,17 @@ try:
                 if not filas_para_eliminar.empty or hay_cambios:
                     if acceso_autorizado:
                         if not filas_para_eliminar.empty:
-                            if st.button(f"🗑️ Confirmar Borrar ({len(filas_para_eliminar)}) filas en la Nube de Google"):
+                            if st.button(f"🗑️ Eliminar Definitivamente ({len(filas_para_eliminar)}) Registros Seleccionados"):
                                 for ws_name, group in filas_para_eliminar.groupby('worksheet_name'):
                                     ws_target = spreadsheet.worksheet(ws_name)
                                     indices = sorted(group['gsheet_id'].tolist(), reverse=True)
                                     for idx in indices: ws_target.delete_rows(idx)
-                                st.success("✅ Filas destruidas de forma segura.")
+                                st.success("✅ Los registros han sido destruidos de forma segura.")
                                 time.sleep(1)
                                 st.rerun()
 
                         if hay_cambios:
-                            if st.button("💾 Guardar los Cambios y Forzar Nuevo Recálculo de Tiempos"):
+                            if st.button("💾 Guardar Modificaciones y Recalcular Métricas Automáticamente"):
                                 for i in range(len(original_data)):
                                     if not original_data.iloc[i].equals(edited_data.iloc[i]):
                                         fila = edited_data.iloc[i].copy()
@@ -516,36 +524,36 @@ try:
                                         row_values = [str(x) if not isinstance(x, (int, float)) else x for x in fila.drop(['gsheet_id', 'worksheet_name']).tolist()]
                                         ws_target.update(f"A{row_idx}:M{row_idx}", [row_values])
                                 
-                                st.success("✅ Modificaciones exitosamente registradas en el historial.")
+                                st.success("✅ Modificaciones integradas exitosamente en la base de datos principal.")
                                 time.sleep(1)
                                 st.rerun()
                     else:
-                        st.error("🛑 Función bloqueada. Ingrese el PIN de seguridad correcto en la casilla superior para habilitar estas opciones.")
+                        st.error("🛑 Operación Restringida: Ingrese el PIN de credencial de administrador para validar estas acciones.")
                 
                 # --- Exportación Final ---
                 st.write("---")
                 csv_m = df_filtrado.drop(columns=['gsheet_id', 'worksheet_name', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
-                st.download_button(f"📥 Exportar el Tablero Actual a CSV (Excel)", data=csv_m, file_name=f"Reporte_Personalizado_Mes_NOC.csv", mime='text/csv')
+                st.download_button(f"📥 Exportar Análisis del Mes a formato Excel (CSV)", data=csv_m, file_name=f"Reporte_Directivo_NOC.csv", mime='text/csv')
 
         else:
-            st.info(f"No hay caídas operativas detectadas para el mes de {mes_seleccionado}.")
+            st.info(f"🟢 Excelente estado operativo: No se detectan fallas mayores registradas para el ciclo mensual de {mes_seleccionado}.")
 
 
         # --- ARCHIVO HISTÓRICO MASIVO ---
         st.divider()
-        st.header("📂 Acceso Libre: Base de Datos de Meses Anteriores")
+        st.header("📂 Histórico Consolidado de Datos Operativos (Mensual)")
+        st.markdown("A continuación se presenta un desglose de los datos históricos mes a mes registrados en el sistema. Despliegue cualquier sección para auditar incidentes pasados.")
         
         meses_con_datos = [m for m in meses_nombres if m in df_total['Mes_Nombre'].unique()]
         otros_meses = [m for m in meses_con_datos if m != mes_seleccionado]
         
         if otros_meses:
             for mes in otros_meses:
-                with st.expander(f"📁 Ver Tabla Cruda de Mes: {mes}"):
+                with st.expander(f"📁 Consultar Registro Histórico Completo: {mes}"):
                     df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'worksheet_name', 'Fecha_Convertida', 'Mes_Nombre'])
                     st.dataframe(df_hist, use_container_width=True, hide_index=True)
                     csv_h = df_hist.to_csv(index=False).encode('utf-8')
-                    st.download_button(label=f"Descargar Excel de {mes} Completo", data=csv_h, file_name=f"BaseDatos_Historica_NOC_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
+                    st.download_button(label=f"📥 Descargar Resumen Excel ({mes})", data=csv_h, file_name=f"Auditoria_Historica_NOC_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
 
 except Exception as e:
-    st.error(f"Error Técnico de Análisis de Datos: {e}")
-
+    st.error(f"⚠️ Error Interno del Motor de Procesamiento de Datos: {e}")
