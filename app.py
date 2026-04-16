@@ -84,11 +84,11 @@ with st.sidebar:
     st.write("---")
     st.write("⏱️ **Ventana Temporal de Inicio**")
     
-    f_i = st.date_input("🗓️ Fecha de Inicio")
-    
+    # NUEVA DISPOSICIÓN: Fecha izquierda (Caja corta), Opciones de hora derecha.
     c1, c2 = st.columns(2)
-    # Vuelven a su posición exacta debajo de la fecha (Conoce Hora de Inicio)
-    conoce_h_i = c1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
+    f_i = c1.date_input("🗓️ Fecha de Inicio")
+    conoce_h_i = c2.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
+    
     if conoce_h_i == "Sí":
         h_i = c2.time_input("🕒 Hora de Apertura")
         hora_inicio_final = h_i.strftime("%H:%M:%S")
@@ -98,11 +98,9 @@ with st.sidebar:
     st.write("---")
     st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
     
-    f_f = st.date_input("🗓️ Fecha de Cierre")
-    
     c_c1, c_c2 = st.columns(2)
-    # Vuelven a su posición exacta debajo de la fecha (Conoce Hora de Cierre)
-    conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
+    f_f = c_c1.date_input("🗓️ Fecha de Cierre")
+    conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
     
     if conoce_h_f == "Sí":
         h_f = c_c2.time_input("🕒 Hora de Cierre")
@@ -145,7 +143,7 @@ with st.sidebar:
     ])
     desc = st.text_area("📝 Detalles Técnicos / Descripción")
     
-    # Botón dinámico (Hace las funciones del formulario antiguo de borrar e insertar línea en drive a la vez)
+    # Botón dinámico
     if st.button("Guardar Registro Operativo"):
         nueva_fila = [
             zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), hora_inicio_final, 
