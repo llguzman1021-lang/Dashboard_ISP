@@ -29,6 +29,7 @@ spreadsheet = conectar()
 if spreadsheet is None: st.stop()
 sheet = spreadsheet.sheet1
 
+
 # --- MOTOR DE CÁLCULOS KPI's ESTRATÉGICOS ---
 def calcular_metricas(df_kpi, horas_mes_total):
     if df_kpi.empty:
@@ -183,12 +184,22 @@ with st.sidebar:
     desc = st.text_area("📝 Detalles Técnicos / Descripción")
     
     if st.button("Guardar Registro Operativo"):
+        meses_nombres_es = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+        nombre_pestana = f"{meses_nombres_es[f_i.month - 1]} {f_i.year}"
+        
+        try:
+            target_sheet = spreadsheet.worksheet(nombre_pestana)
+        except gspread.exceptions.WorksheetNotFound:
+            target_sheet = spreadsheet.add_worksheet(title=nombre_pestana, rows="1000", cols="20")
+            encabezados = ["Zona", "Servicio", "Categoria", "Equipo_Afectado", "Fecha_Inicio", "Hora_Inicio", "Fecha_Fin", "Hora_Fin", "Clientes_Afectados", "Causa_Raiz", "Descripcion", "Duracion_Horas", "Conocimiento_Tiempos"]
+            target_sheet.append_row(encabezados)
+
         nueva_fila = [
             zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), hora_inicio_final, 
             f_f.strftime("%d/%m/%Y"), final_h, int(clientes), causa, desc, duracion, desc_conocimiento
         ]
-        sheet.append_row(nueva_fila)
-        st.toast("✅ Base de datos operativa actualizada satisfactoriamente")
+        target_sheet.append_row(nueva_fila)
+        st.toast(f"✅ Guardado en la pestaña '{nombre_pestana}' exitosamente")
         time.sleep(1)
         st.rerun()
 
@@ -230,6 +241,7 @@ try:
         keys = list(ws_records[0].keys())
         is_old = any(k.upper() == 'ZONA' for k in keys) and not any(k == 'Causa_Raiz' for k in keys)
         
+        row_idx = 2
         for r in ws_records:
             if is_old:
                 f_ini = parse_fecha(r.get('FECHA DE INICIO', ''))
@@ -253,7 +265,7 @@ try:
                 match_clientes = re.search(r'(\d+)\s+clientes', desc, re.IGNORECASE)
                 cl = int(match_clientes.group(1)) if match_clientes else 0
 
-                all_records.append({
+                normalized_r = {
                     "Zona": r.get('ZONA', 'Desconocido'),
                     "Servicio": "Internet",
                     "Categoria": "Histórico",
@@ -267,13 +279,18 @@ try:
                     "Descripcion": desc,
                     "Duracion_Horas": dur,
                     "Conocimiento_Tiempos": conocimiento
-                })
+                }
+                normalized_r['gsheet_id'] = row_idx
+                normalized_r['worksheet_name'] = ws.title
+                all_records.append(normalized_r)
             else:
+                r['gsheet_id'] = row_idx
+                r['worksheet_name'] = ws.title
                 all_records.append(r)
+            row_idx += 1
 
     if all_records:
         df_total = pd.DataFrame(all_records)
-        df_total['gsheet_id'] = range(2, len(df_total) + 2)
         
         # --- AUTO-DETECCIÓN INTELIGENTE DE ENCABEZADOS EN GDOCS ---
         cols_drive = df_total.columns.tolist()
@@ -442,6 +459,7 @@ try:
                     column_config={
                         "Seleccionar": st.column_config.CheckboxColumn("Sel", default=False), 
                         "gsheet_id": None,
+                        "worksheet_name": None,
                         "Servicio": st.column_config.SelectboxColumn("Servicio", options=servicio_opciones, required=True),
                         "Fecha_Inicio": st.column_config.TextColumn("F. Inicio"),
                         "Hora_Inicio": st.column_config.TextColumn("H. Inicio"),
@@ -463,8 +481,10 @@ try:
                     if acceso_autorizado:
                         if not filas_para_eliminar.empty:
                             if st.button(f"🗑️ Confirmar Borrar ({len(filas_para_eliminar)}) filas en la Nube de Google"):
-                                indices = sorted(filas_para_eliminar['gsheet_id'].tolist(), reverse=True)
-                                for idx in indices: sheet.delete_rows(idx)
+                                for ws_name, group in filas_para_eliminar.groupby('worksheet_name'):
+                                    ws_target = spreadsheet.worksheet(ws_name)
+                                    indices = sorted(group['gsheet_id'].tolist(), reverse=True)
+                                    for idx in indices: ws_target.delete_rows(idx)
                                 st.success("✅ Filas destruidas de forma segura.")
                                 time.sleep(1)
                                 st.rerun()
@@ -475,6 +495,8 @@ try:
                                     if not original_data.iloc[i].equals(edited_data.iloc[i]):
                                         fila = edited_data.iloc[i].copy()
                                         row_idx = int(fila['gsheet_id'])
+                                        ws_name = fila['worksheet_name']
+                                        ws_target = spreadsheet.worksheet(ws_name)
                                         
                                         f_i_s, h_i_s = str(fila['Fecha_Inicio']), str(fila['Hora_Inicio'])
                                         f_f_s, h_f_s = str(fila['Fecha_Fin']), str(fila['Hora_Fin'])
@@ -491,8 +513,8 @@ try:
                                             dur_r = 0
 
                                         fila['Duracion_Horas'] = dur_r
-                                        row_values = [str(x) if not isinstance(x, (int, float)) else x for x in fila.drop('gsheet_id').tolist()]
-                                        sheet.update(f"A{row_idx}:M{row_idx}", [row_values])
+                                        row_values = [str(x) if not isinstance(x, (int, float)) else x for x in fila.drop(['gsheet_id', 'worksheet_name']).tolist()]
+                                        ws_target.update(f"A{row_idx}:M{row_idx}", [row_values])
                                 
                                 st.success("✅ Modificaciones exitosamente registradas en el historial.")
                                 time.sleep(1)
@@ -502,7 +524,7 @@ try:
                 
                 # --- Exportación Final ---
                 st.write("---")
-                csv_m = df_filtrado.drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
+                csv_m = df_filtrado.drop(columns=['gsheet_id', 'worksheet_name', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
                 st.download_button(f"📥 Exportar el Tablero Actual a CSV (Excel)", data=csv_m, file_name=f"Reporte_Personalizado_Mes_NOC.csv", mime='text/csv')
 
         else:
@@ -519,7 +541,7 @@ try:
         if otros_meses:
             for mes in otros_meses:
                 with st.expander(f"📁 Ver Tabla Cruda de Mes: {mes}"):
-                    df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre'])
+                    df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'worksheet_name', 'Fecha_Convertida', 'Mes_Nombre'])
                     st.dataframe(df_hist, use_container_width=True, hide_index=True)
                     csv_h = df_hist.to_csv(index=False).encode('utf-8')
                     st.download_button(label=f"Descargar Excel de {mes} Completo", data=csv_h, file_name=f"BaseDatos_Historica_NOC_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
