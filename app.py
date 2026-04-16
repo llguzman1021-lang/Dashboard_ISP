@@ -169,28 +169,51 @@ try:
         st.title(f"📊 Dashboard Operacional NOC: {mes_seleccionado} {datetime.now().year}")
 
         if not df_mes.empty:
-            downtime_total = df_mes['Duracion_Horas'].sum()
+            mes_index = meses_nombres.index(mes_seleccionado) + 1
+            anio_actual = datetime.now().year
+            dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
+            horas_totales_mes = dias_mes * 24  # Base 24/7 estándar FTTH
 
-            # --- NUEVA FÓRMULA ESTRATÉGICA: Average Customer Downtime (ACD) ---
-            mask_valid = (df_mes['Duracion_Horas'] > 0) & (df_mes['Clientes_Afectados'] > 0)
-            if mask_valid.any():
-                acd_horas = (df_mes.loc[mask_valid, 'Duracion_Horas'] * df_mes.loc[mask_valid, 'Clientes_Afectados']).sum() / df_mes.loc[mask_valid, 'Clientes_Afectados'].sum()
-            else:
-                acd_horas = 0.0
+            # Sigue sumando de forma bruta para mostrártelo como total acumilado del equipo técnico
+            downtime_total_bruto = df_mes['Duracion_Horas'].sum()
 
-            # Delta Visual para presentar a Gerencia (Escalado de salud para ISP FTTH)
-            if acd_horas == 0.0:
-                acd_delta = "✅ Sin Afectaciones"
-                acd_delta_color = "normal"
-            elif acd_horas <= 2.0:
-                acd_delta = "✅ Atención Excelente"
-                acd_delta_color = "normal"
-            elif acd_horas <= 6.0:
-                acd_delta = "⚠️ Tiempo Aceptable"
-                acd_delta_color = "off"
+            # --- NUEVO CÁLCULO SLA: TRUE NETWORK UPTIME (Anti-Solapamiento) ---
+            df_valid_times = df_mes[df_mes['Conocimiento_Tiempos'] == 'Total'].copy()
+            downtime_real_horas = 0.0
+            
+            if not df_valid_times.empty:
+                starts = pd.to_datetime(df_valid_times['Fecha_Inicio'] + ' ' + df_valid_times['Hora_Inicio'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+                ends = pd.to_datetime(df_valid_times['Fecha_Fin'] + ' ' + df_valid_times['Hora_Fin'], format="%d/%m/%Y %H:%M:%S", errors='coerce')
+                
+                valid_mask = (starts.notna()) & (ends.notna()) & (starts <= ends)
+                
+                if valid_mask.any():
+                    # Formando grupos ordenados y fusionando los que pasaron a la misma hora
+                    intervals = sorted(list(zip(starts[valid_mask].tolist(), ends[valid_mask].tolist())), key=lambda x: x[0])
+                    merged = [list(intervals[0])] 
+                    for current in intervals[1:]:
+                        last = merged[-1]
+                        if current[0] <= last[1]:
+                            merged[-1][1] = max(last[1], current[1]) # Se fusionan tiempos superpuestos (Anti-solapamiento)
+                        else:
+                            merged.append(list(current))
+                    
+                    total_seconds_down = sum((end - start).total_seconds() for start, end in merged)
+                    downtime_real_horas = total_seconds_down / 3600.0
+
+            # CÁLCULO FINAL DE PORCENTAJE USANDO EL RECORRIDO DE TIEMPO PURO SIN DOBLES 
+            sla_porcentaje = ((horas_totales_mes - downtime_real_horas) / horas_totales_mes) * 100
+            sla_porcentaje = max(0.0, min(100.0, sla_porcentaje))
+
+            if sla_porcentaje >= 99.9:
+                sla_delta = "✅ Dentro del SLA"
+                sla_delta_color = "normal"
+            elif sla_porcentaje >= 99.0:
+                sla_delta = "⚠️ En riesgo de SLA"
+                sla_delta_color = "off"
             else:
-                acd_delta = "🚨 Impacto Crítico (>6h)"
-                acd_delta_color = "inverse"
+                sla_delta = "🚨 SLA Incumplido"
+                sla_delta_color = "inverse"
 
             # Render de KPI'S
             k_mttr, k_imp, k_max, k_down, k_sla = st.columns(5)
@@ -201,13 +224,17 @@ try:
             k_mttr.metric("⏱️ MTTR (Promedio)", f"{avg_mttr:.2f} horas", help="Mean Time To Repair: Tiempo promedio de resolución para incidentes con registros completos.")
             k_imp.metric("👥 Impacto Acumulado", f"{int(df_mes['Clientes_Afectados'].sum())} clientes", help="Total de usuarios/clientes afectados por incidencias en el periodo actual.")
             k_max.metric("🚨 Máx Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas", help="El incidente temporal de mayor duración registrado en el mes.")
-            k_down.metric("⏳ Downtime Total", f"{downtime_total:.2f} horas", help="Suma total de horas de inactividad global de la infraestructura.")
+            
+            # Se queda el bruto aquí, para demostrar cuánto tiempo productivo le tomó al personal trabajar en reparaciones
+            k_down.metric("⏳ Downtime Total", f"{downtime_total_bruto:.2f} horas", help="Suma total matemática de horas de inactividad, refleja suma de trabajo de gestión de averías.")
+            
+            # SLA de Retorno real 
             k_sla.metric(
-                "📶 Promedio Afectación",
-                f"{acd_horas:.2f} h/cliente",
-                delta=acd_delta,
-                delta_color=acd_delta_color,
-                help="Average Customer Downtime (ACD): Horas que promedio sufre un cliente cuando ocurre una falla masiva. Desprecia la necesidad de la cartera base ideal."
+                "📶 Disponibilidad SLA",
+                f"{sla_porcentaje:.3f}%",
+                delta=sla_delta,
+                delta_color=sla_delta_color,
+                help=f"True Network Uptime Cronológico (Evita el solapamiento horario). Mínimo FTTH: 99.9%"
             )
 
             st.write("---")
