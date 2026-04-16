@@ -136,13 +136,12 @@ try:
             df_display = df_mes.copy()
             df_display.insert(0, "Seleccionar", False)
             
-            # Editor de datos permitiendo cambios
             edited_df = st.data_editor(
                 df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre']),
                 column_config={
                     "Seleccionar": st.column_config.CheckboxColumn(default=False), 
-                    "gsheet_id": None, # Oculto pero presente
-                    "Duracion_Horas": st.column_config.NumberColumn(disabled=True) # Cálculo automático
+                    "gsheet_id": None,
+                    "Duracion_Horas": st.column_config.NumberColumn(disabled=True)
                 },
                 use_container_width=True,
                 hide_index=True,
@@ -161,20 +160,17 @@ try:
                     time.sleep(1)
                     st.rerun()
 
-            # Lógica para EDITAR (Detectar si hubo cambios fuera de 'Seleccionar')
-            # Comparamos el dataframe original mostrado (df_display) con el editado
+            # Lógica para EDITAR (CORREGIDA PARA EVITAR ERROR JSON)
             original_data = df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre', 'Seleccionar'])
             edited_data = edited_df.drop(columns=['Seleccionar'])
             
             if not original_data.equals(edited_data):
                 if st.button("💾 Guardar Cambios Editados"):
-                    # Buscamos qué filas cambiaron comparando por gsheet_id
                     for i in range(len(original_data)):
                         if not original_data.iloc[i].equals(edited_data.iloc[i]):
                             row_idx = int(edited_data.iloc[i]['gsheet_id'])
-                            # Extraer valores de la fila editada (excluyendo el gsheet_id final)
-                            row_values = edited_data.iloc[i].drop('gsheet_id').tolist()
-                            # Actualizar el rango completo en la fila correspondiente
+                            # .tolist() convierte a tipos Python, pero por seguridad forzamos conversión a string/int nativo
+                            row_values = [str(x) if not isinstance(x, (int, float)) else x for x in edited_data.iloc[i].drop('gsheet_id').tolist()]
                             sheet.update(f"A{row_idx}:K{row_idx}", [row_values])
                     
                     st.success("✅ Cambios sincronizados con éxito.")
