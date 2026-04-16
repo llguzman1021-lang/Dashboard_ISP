@@ -104,24 +104,35 @@ try:
             k3.metric("🚨 Máx Caída", f"{df_mes['Duracion_Horas'].max():.2f} h")
             k4.metric("⏳ Acumulado", f"{df_mes['Duracion_Horas'].sum():.2f} h")
 
-            # --- GRÁFICAS ---
+            # --- GRÁFICAS PROFESIONALES ---
             st.divider()
-            # 1. Tendencia Temporal
-            fig_trend = px.line(df_mes.groupby('Fecha_Convertida').size().reset_index(name='Cant'), 
-                                x='Fecha_Convertida', y='Cant', title="Tendencia de Fallas", markers=True, template="plotly_dark")
-            fig_trend.update_traces(line_color='#0068c9')
+            
+            # 1. Gráfica de Tendencia (Line Chart) - Análisis de Estabilidad Temporal
+            df_trend = df_mes.groupby('Fecha_Convertida').size().reset_index(name='Total_Eventos')
+            fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Total_Eventos', 
+                                title="📉 Evolución Diaria de Incidentes de Red",
+                                labels={'Fecha_Convertida': 'Fecha', 'Total_Eventos': 'Cant. Incidentes'},
+                                template="plotly_dark")
+            fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
+            fig_trend.update_layout(hovermode="x unified", xaxis_title=None, yaxis_title="N° Incidentes")
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # 2. Distribución por Categoría
-            fig_pie = px.pie(df_mes, names='Categoria', title="Distribución por Categoría", 
-                             hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Safe)
+            # 2. Gráfica de Distribución (Donut Chart) - Composición de Cartera
+            fig_pie = px.pie(df_mes, names='Categoria', title="📂 Impacto por Segmento de Cliente", 
+                             hole=0.5, template="plotly_dark", 
+                             color_discrete_sequence=['#0068c9', '#ff4b4b'])
+            fig_pie.update_traces(textposition='outside', textinfo='percent+label')
+            fig_pie.update_layout(showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # 3. Top Zonas
-            top_zonas = df_mes['Zona'].value_counts().nlargest(5).reset_index()
-            top_zonas.columns = ['Zona', 'Fallas']
-            fig_bar = px.bar(top_zonas, x='Zona', y='Fallas', title="Top 5 Zonas con más Fallas",
-                             text_auto=True, template="plotly_dark", color='Fallas', color_continuous_scale='Blues')
+            # 3. Gráfica de Criticidad por Zona (Bar Chart) - Identificación de Nodos Críticos
+            top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
+            fig_bar = px.bar(top_zonas, x='Duracion_Horas', y='Zona', orientation='h',
+                             title="📍 Top 5 Zonas con Mayor Tiempo de Inactividad (Horas Acumuladas)",
+                             labels={'Duracion_Horas': 'Total Horas Caídas', 'Zona': 'Nodo/Zona'},
+                             text_auto='.2f', template="plotly_dark",
+                             color='Duracion_Horas', color_continuous_scale='Blues')
+            fig_bar.update_layout(showlegend=False, coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'})
             st.plotly_chart(fig_bar, use_container_width=True)
 
             # --- BITÁCORA DEL MES (CON ELIMINACIÓN) ---
