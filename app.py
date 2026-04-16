@@ -169,27 +169,30 @@ try:
         st.title(f"📊 Dashboard Operacional NOC: {mes_seleccionado} {datetime.now().year}")
 
         if not df_mes.empty:
-            # --- KPIs ESTRATÉGICOS ---
-            mes_index = meses_nombres.index(mes_seleccionado) + 1
-            anio_actual = datetime.now().year
-            dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
-            horas_totales_mes = dias_mes * 24  # Base 24/7 estándar FTTH
-
-            # FÓRMULA SLA ORIGINAL
             downtime_total = df_mes['Duracion_Horas'].sum()
-            sla_porcentaje = ((horas_totales_mes - downtime_total) / horas_totales_mes) * 100
-            sla_porcentaje = max(0.0, min(100.0, sla_porcentaje))  # Clamp entre 0 y 100
 
-            if sla_porcentaje >= 99.9:
-                sla_delta = "✅ Dentro del SLA"
-                sla_delta_color = "normal"
-            elif sla_porcentaje >= 99.0:
-                sla_delta = "⚠️ En riesgo de SLA"
-                sla_delta_color = "off"
+            # --- NUEVA FÓRMULA ESTRATÉGICA: Average Customer Downtime (ACD) ---
+            mask_valid = (df_mes['Duracion_Horas'] > 0) & (df_mes['Clientes_Afectados'] > 0)
+            if mask_valid.any():
+                acd_horas = (df_mes.loc[mask_valid, 'Duracion_Horas'] * df_mes.loc[mask_valid, 'Clientes_Afectados']).sum() / df_mes.loc[mask_valid, 'Clientes_Afectados'].sum()
             else:
-                sla_delta = "🚨 SLA Incumplido"
-                sla_delta_color = "inverse"
+                acd_horas = 0.0
 
+            # Delta Visual para presentar a Gerencia (Escalado de salud para ISP FTTH)
+            if acd_horas == 0.0:
+                acd_delta = "✅ Sin Afectaciones"
+                acd_delta_color = "normal"
+            elif acd_horas <= 2.0:
+                acd_delta = "✅ Atención Excelente"
+                acd_delta_color = "normal"
+            elif acd_horas <= 6.0:
+                acd_delta = "⚠️ Tiempo Aceptable"
+                acd_delta_color = "off"
+            else:
+                acd_delta = "🚨 Impacto Crítico (>6h)"
+                acd_delta_color = "inverse"
+
+            # Render de KPI'S
             k_mttr, k_imp, k_max, k_down, k_sla = st.columns(5)
 
             df_mttr = df_mes[df_mes['Duracion_Horas'] > 0]
@@ -200,11 +203,11 @@ try:
             k_max.metric("🚨 Máx Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas", help="El incidente temporal de mayor duración registrado en el mes.")
             k_down.metric("⏳ Downtime Total", f"{downtime_total:.2f} horas", help="Suma total de horas de inactividad global de la infraestructura.")
             k_sla.metric(
-                "📶 Disponibilidad SLA",
-                f"{sla_porcentaje:.3f}%",
-                delta=sla_delta,
-                delta_color=sla_delta_color,
-                help=f"Disponibilidad mensual de la red sobre base 24/7 ({horas_totales_mes}h). Estándar FTTH mínimo: 99.9%"
+                "📶 Promedio Afectación",
+                f"{acd_horas:.2f} h/cliente",
+                delta=acd_delta,
+                delta_color=acd_delta_color,
+                help="Average Customer Downtime (ACD): Horas que promedio sufre un cliente cuando ocurre una falla masiva. Desprecia la necesidad de la cartera base ideal."
             )
 
             st.write("---")
