@@ -94,9 +94,9 @@ f_i = c1.date_input("🗓️ Fecha de Inicio")
 
 h_i = c2.time_input("🕒 Hora de Apertura (Opcional)", value=None)
 if h_i:
-    hora_inicio_final = h_i.strftime("%H:%M:%S")
+hora_inicio_final = h_i.strftime("%H:%M:%S")
 else:
-    hora_inicio_final = "N/A"
+hora_inicio_final = "N/A"
 
 st.write("---")
 st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
@@ -115,31 +115,31 @@ desc_conocimiento = "Parcial"
 
 # Procesamiento
 try:
-    if h_f:
-        final_h = h_f.strftime("%H:%M:%S")
+if h_f:
+    final_h = h_f.strftime("%H:%M:%S")
 
-    # SOLO calcular duración si ambas horas existen
-    if h_i and h_f:
-        dt_i = datetime.combine(f_i, h_i)
-        dt_f = datetime.combine(f_f, h_f)
+# SOLO calcular duración si ambas horas existen
+if h_i and h_f:
+    dt_i = datetime.combine(f_i, h_i)
+    dt_f = datetime.combine(f_f, h_f)
 
-        duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+    duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
 
-        if duracion < 0:
-            st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
-            duracion = 0
-            final_h = "N/A"
-            desc_conocimiento = "N/A"
-        else:
-            desc_conocimiento = "Total"
-    else:
+    if duracion < 0:
+        st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
         duracion = 0
-        desc_conocimiento = "Parcial"
+        final_h = "N/A"
+        desc_conocimiento = "N/A"
+    else:
+        desc_conocimiento = "Total"
+else:
+    duracion = 0
+    desc_conocimiento = "Parcial"
 
 except Exception:
-    duracion = 0
-    final_h = "N/A"
-    desc_conocimiento = "N/A"
+duracion = 0
+final_h = "N/A"
+desc_conocimiento = "N/A"
 
         st.write("---")
         clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
