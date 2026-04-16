@@ -98,7 +98,6 @@ with st.sidebar:
         st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
         
         c_c1, c_c2 = st.columns(2)
-        conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
         conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
         
         st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
