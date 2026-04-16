@@ -4,6 +4,7 @@ import gspread
 from oauth2client.service_account import ServiceAccountCredentials
 import plotly.express as px
 from datetime import datetime
+import calendar
 import time
 
 # --- CONFIGURACIÓN DE PÁGINA ---
@@ -18,7 +19,6 @@ def conectar():
         creds_info["private_key"] = creds_info["private_key"].replace("\\n", "\n")
         creds = ServiceAccountCredentials.from_json_keyfile_dict(creds_info, scope)
         client = gspread.authorize(creds)
-        # Se asume que la hoja tiene las columnas correctas incluyendo 'Servicio' y 'Conocimiento_Tiempos'
         return client.open("Dashboard_ISP").sheet1
     except Exception as e:
         st.error(f"Error de enlace con la base de datos central: {e}")
@@ -30,7 +30,6 @@ if sheet is None: st.stop()
 # --- ESTILOS PROFESIONALES ---
 st.markdown("""
     <style>
-    /* Estilo global de botones Streamlit (azul Multinet) */
     div.stButton > button:first-child { 
         background-color: #0068c9; 
         color: white; 
@@ -46,19 +45,16 @@ st.markdown("""
         border: none;
         color: white;
     }
-    /* Estilo de etiquetas de KPIs */
     [data-testid="stMetricLabel"] { 
         color: #808495 !important; 
         font-size: 15px !important; 
         font-weight: 500 !important; 
     }
-    /* Estilo de valores de KPIs */
     [data-testid="stMetricValue"] { 
         color: #ffffff !important; 
         font-size: 32px !important;
         font-weight: 700 !important;
     }
-    /* Redondear alertas y markdown */
     .stAlert, .stMarkdown { border-radius: 8px; }
     </style>
     """, unsafe_allow_html=True)
@@ -89,8 +85,15 @@ with st.sidebar:
         st.write("⏱️ **Ventana Temporal de Inicio**")
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
-        h_i = c2.time_input("🕒 Hora de Apertura")
-        
+
+        # MODIFICACIÓN 1: Opción de conocer hora de inicio
+        conoce_h_i = st.radio("🕒 ¿Conoce Hora de Apertura?", ["Sí", "No"], horizontal=True)
+        if conoce_h_i == "Sí":
+            h_i = c2.time_input("🕒 Hora de Apertura")
+            hora_inicio_final = h_i.strftime("%H:%M:%S")
+        else:
+            hora_inicio_final = "N/A"
+
         st.write("---")
         st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
         
@@ -98,14 +101,13 @@ with st.sidebar:
         conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
         conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
         
-        # Lógica de estados desconocidos profesional
         st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
         
         c3, c4 = st.columns(2)
         final_f = "N/A"
         final_h = "N/A"
         duracion = 0
-        desc_conocimiento = "Total" # Por defecto
+        desc_conocimiento = "Total"
 
         if conoce_f_f == "Sí" and conoce_h_f == "Sí":
             f_f = c3.date_input("🗓️ Fecha de Cierre")
@@ -114,15 +116,17 @@ with st.sidebar:
             final_h = h_f.strftime("%H:%M:%S")
             desc_conocimiento = "Total"
             
-            # Cálculo de Duración Profesional
             try:
-                dt_i = datetime.combine(f_i, h_i)
-                dt_f = datetime.combine(f_f, h_f)
-                duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                if duracion < 0:
-                    st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
+                if conoce_h_i == "Sí":
+                    dt_i = datetime.combine(f_i, h_i)
+                    dt_f = datetime.combine(f_f, h_f)
+                    duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+                    if duracion < 0:
+                        st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
+                        duracion = 0
+                        final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
+                else:
                     duracion = 0
-                    final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
             except:
                 duracion = 0
                 final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
@@ -131,14 +135,14 @@ with st.sidebar:
             f_f = c3.date_input("🗓️ Fecha de Cierre")
             final_f = f_f.strftime("%d/%m/%Y")
             final_h = "N/A"
-            duracion = 0 # No se puede calcular sin hora
+            duracion = 0
             desc_conocimiento = "Parcial (Solo Fecha)"
 
         elif conoce_f_f == "No" and conoce_h_f == "Sí":
             h_f = c4.time_input("🕒 Hora de Cierre")
             final_f = "N/A"
             final_h = h_f.strftime("%H:%M:%S")
-            duracion = 0 # No se puede calcular sin fecha
+            duracion = 0
             desc_conocimiento = "Parcial (Solo Hora)"
         
         else:
@@ -161,10 +165,8 @@ with st.sidebar:
         desc = st.text_area("📝 Detalles Técnicos / Descripción")
         
         if st.form_submit_button("Guardar Registro Operativo"):
-            # Se asume que el orden de columnas en GSheets es:
-            # Zona, Servicio, Categoría, Equipo, Fecha_Inicio, Hora_Inicio, Fecha_Fin, Hora_Fin, Clientes_Afectados, Causa_Raiz, Descripción, Duracion_Horas, Conocimiento_Tiempos
             nueva_fila = [
-                zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), h_i.strftime("%H:%M:%S"), 
+                zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), hora_inicio_final, 
                 final_f, final_h, int(clientes), causa, desc, duracion, desc_conocimiento
             ]
             sheet.append_row(nueva_fila)
@@ -181,22 +183,51 @@ try:
         df_total['Fecha_Convertida'] = pd.to_datetime(df_total['Fecha_Inicio'], dayfirst=True, errors='coerce')
         df_total['Mes_Nombre'] = df_total['Fecha_Convertida'].dt.month.map(lambda x: meses_nombres[int(x)-1] if pd.notnull(x) else None)
 
-        # Filtrado para el Dashboard Principal (Mes seleccionado)
         df_mes = df_total[df_total['Mes_Nombre'] == mes_seleccionado].copy()
 
         st.title(f"📊 Dashboard Operacional NOC: {mes_seleccionado} {datetime.now().year}")
 
         if not df_mes.empty:
             # --- KPIs ESTRATÉGICOS ---
-            k_mttr, k_imp, k_max, k_down = st.columns(4)
-            # Cálculo profesional de MTTR (Mean Time To Repair) solo sobre registros con tiempos totales
+            # MODIFICACIÓN SLA: Calcular horas totales del mes seleccionado y % disponibilidad
+            mes_index = meses_nombres.index(mes_seleccionado) + 1
+            anio_actual = datetime.now().year
+            dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
+            horas_totales_mes = dias_mes * 24  # Base 24/7 estándar FTTH
+
+            downtime_total = df_mes['Duracion_Horas'].sum()
+            sla_porcentaje = ((horas_totales_mes - downtime_total) / horas_totales_mes) * 100
+            sla_porcentaje = max(0.0, min(100.0, sla_porcentaje))  # Clamp entre 0 y 100
+
+            # Color del SLA según umbral estándar ISP
+            if sla_porcentaje >= 99.9:
+                sla_delta = "✅ Dentro del SLA"
+                sla_delta_color = "normal"
+            elif sla_porcentaje >= 99.0:
+                sla_delta = "⚠️ En riesgo de SLA"
+                sla_delta_color = "off"
+            else:
+                sla_delta = "🚨 SLA Incumplido"
+                sla_delta_color = "inverse"
+
+            # 5 columnas: MTTR, Impacto, Máxima Indisponibilidad, Downtime, SLA
+            k_mttr, k_imp, k_max, k_down, k_sla = st.columns(5)
+
             df_mttr = df_mes[df_mes['Duracion_Horas'] > 0]
             avg_mttr = df_mttr['Duracion_Horas'].mean() if not df_mttr.empty else 0
-            
-            k_mttr.metric("⏱️ MTTR (Promedio)", f"{avg_mttr:.2f} h", help="Mean Time To Repair: Tiempo promedio de resolución para incidentes con registros completos.")
-            k_imp.metric("👥 Impacto Acumulado", f"{int(df_mes['Clientes_Afectados'].sum())}", help="Total de usuarios/clientes afectados por incidencias en el periodo actual.")
-            k_max.metric("🚨 Máxima Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} h", help="El incidente de mayor duración registrado en el mes.")
-            k_down.metric("⏳ Downtime Total", f"{df_mes['Duracion_Horas'].sum():.2f} h", help="Suma total de horas de inactividad de la infraestructura de red.")
+
+            # MODIFICACIÓN 3: "h" → "horas" y agregar "clientes" en Impacto Acumulado
+            k_mttr.metric("⏱️ MTTR (Promedio)", f"{avg_mttr:.2f} horas", help="Mean Time To Repair: Tiempo promedio de resolución para incidentes con registros completos.")
+            k_imp.metric("👥 Impacto Acumulado", f"{int(df_mes['Clientes_Afectados'].sum())} clientes", help="Total de usuarios/clientes afectados por incidencias en el periodo actual.")
+            k_max.metric("🚨 Máxima Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas", help="El incidente de mayor duración registrado en el mes.")
+            k_down.metric("⏳ Downtime Total", f"{downtime_total:.2f} horas", help="Suma total de horas de inactividad de la infraestructura de red.")
+            k_sla.metric(
+                "📶 Disponibilidad SLA",
+                f"{sla_porcentaje:.3f}%",
+                delta=sla_delta,
+                delta_color=sla_delta_color,
+                help=f"Disponibilidad mensual de la red sobre base 24/7 ({horas_totales_mes}h). Estándar FTTH mínimo: 99.9%"
+            )
 
             # Gráfica de Composición de Servicio Afectado (KPI Visual)
             st.write("---")
@@ -208,7 +239,6 @@ try:
             fig_serv_kpi.update_layout(showlegend=False, height=250, margin=dict(l=0, r=0, t=60, b=0))
             fig_serv_kpi.update_traces(textposition='inside', textfont_size=14, marker_line_width=0)
             st.plotly_chart(fig_serv_kpi, use_container_width=True)
-
 
             # --- VISUALIZACIÓN DE ALTO NIVEL ---
             st.divider()
@@ -222,25 +252,27 @@ try:
             fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # 2. Distribución por Categoría de Cliente (Ahora uno sobre otro)
+            # 2. Distribución por Categoría de Cliente
             fig_pie = px.pie(df_mes, names='Categoria', title="📂 <b>Composición de Cartera Afectada</b><br><sup>Distribución porcentual de incidentes por segmento de mercado</sup>", 
                             hole=0.6, template="plotly_dark", color_discrete_sequence=['#0068c9', '#ff4b4b'])
             fig_pie.update_traces(textposition='outside', textinfo='percent+label', textfont_size=13)
             fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=70, b=0))
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # 3. Top Zonas Críticas (Cambiado a icono de tendencia profesional)
+            # 3. Top Zonas Críticas
+            # MODIFICACIÓN 2: text_auto muestra el valor con etiqueta "horas" en la barra
             top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
             top_zonas.columns = ['Zona', 'Horas Offline']
+            top_zonas['Etiqueta'] = top_zonas['Horas Offline'].apply(lambda x: f"{x:.2f} horas")
             fig_bar = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
                              title="📈 <b>Puntos Críticos de Indisponibilidad</b><br><sup>Top 5 sectores geográficos con mayor degradación acumulada de servicio</sup>",
                              labels={'Horas Offline': 'Total Horas de Indisponibilidad'},
-                             text_auto='.2f', template="plotly_dark", color='Horas Offline', color_continuous_scale='Blues')
+                             text='Etiqueta', template="plotly_dark", color='Horas Offline', color_continuous_scale='Blues')
             fig_bar.update_layout(coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'}, margin=dict(l=0, r=0, t=70, b=0))
-            fig_bar.update_traces(marker_line_width=0, textfont_size=13)
+            fig_bar.update_traces(marker_line_width=0, textfont_size=13, textposition='inside')
             st.plotly_chart(fig_bar, use_container_width=True)
 
-            # --- BITÁCORA INTELIGENTE (CON EDICIÓN Y RECALCULO DE TIEMPO) ---
+            # --- BITÁCORA INTELIGENTE ---
             st.divider()
             st.subheader(f"🔍 Auditoría y Gestión de Bitácora Operativa: {mes_seleccionado}")
             st.caption("ℹ️ Los cambios en fechas, horas o tipo de conocimiento recalcularán automáticamente la duración al sincronizar.")
@@ -248,7 +280,6 @@ try:
             df_display = df_mes.copy()
             df_display.insert(0, "Seleccionar", False)
             
-            # Definir opciones para columnas editables profesionales
             conoce_opciones = ["Total", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
             servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
 
@@ -276,7 +307,6 @@ try:
             if not filas_para_eliminar.empty:
                 st.warning(f"⚠️ Atención: Está a punto de eliminar permanentemente {len(filas_para_eliminar)} registro(s).")
                 if st.button(f"🗑️ Confirmar Depuración de Datos ({len(filas_para_eliminar)})"):
-                    # Ordenar de mayor a menor para no alterar los índices de las filas restantes al borrar
                     indices = sorted(filas_para_eliminar['gsheet_id'].tolist(), reverse=True)
                     for idx in indices:
                         sheet.delete_rows(idx)
@@ -284,20 +314,17 @@ try:
                     time.sleep(1)
                     st.rerun()
 
-            # Lógica para EDITAR (CON RECÁLCULO DE TIEMPO INTELIGENTE AL SINCRONIZAR)
-            # Comparamos el dataframe original mostrado (df_display) con el editado
+            # Lógica para EDITAR
             original_data = df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre', 'Seleccionar'])
             edited_data = edited_df.drop(columns=['Seleccionar'])
             
             if not original_data.equals(edited_data):
                 if st.button("💾 Sincronizar Ediciones Operativas"):
-                    # Buscamos qué filas cambiaron comparando por gsheet_id
                     for i in range(len(original_data)):
                         if not original_data.iloc[i].equals(edited_data.iloc[i]):
                             fila = edited_data.iloc[i].copy()
                             row_idx = int(fila['gsheet_id'])
                             
-                            # Lógica de Recálculo de Tiempo Automático Profesional al sincronizar
                             f_i_s = str(fila['Fecha_Inicio'])
                             h_i_s = str(fila['Hora_Inicio'])
                             f_f_s = str(fila['Fecha_Fin'])
@@ -307,24 +334,18 @@ try:
                             duracion_recalculada = 0
                             
                             try:
-                                if conoce_s == "Total" and f_f_s != "N/A" and h_f_s != "N/A":
-                                    # Intentar parsear las fechas/horas editadas
+                                if conoce_s == "Total" and f_f_s != "N/A" and h_f_s != "N/A" and h_i_s != "N/A":
                                     dt_ini = datetime.strptime(f"{f_i_s} {h_i_s}", "%d/%m/%Y %H:%M:%S")
                                     dt_fin = datetime.strptime(f"{f_f_s} {h_f_s}", "%d/%m/%Y %H:%M:%S")
                                     duracion_recalculada = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
                                     if duracion_recalculada < 0: duracion_recalculada = 0
                                 else:
-                                    # Si el conocimiento es parcial o falta dato, la duración es 0
                                     duracion_recalculada = 0
                             except:
-                                # En caso de error de parseo (formato incorrecto), Duration=0
                                 duracion_recalculada = 0
 
-                            # Actualizar Duracion_Horas en la fila editada
                             fila['Duracion_Horas'] = duracion_recalculada
 
-                            # Preparación de datos final para GSheets (asegurando tipos nativos Python)
-                            # Orden de columnas asumido en GSheets: Zona, Servicio, Categoria, Equipo, Fecha_I, Hora_I, Fecha_F, Hora_F, Clientes_Af, Causa, Desc, Duracion_H, Conocimiento_T
                             row_values = [str(x) if not isinstance(x, (int, float)) else x for x in fila.drop('gsheet_id').tolist()]
                             sheet.update(f"A{row_idx}:M{row_idx}", [row_values])
                     
@@ -351,11 +372,9 @@ try:
         if otros_meses:
             for mes in otros_meses:
                 with st.expander(f"📁 Consolidado Mensual: {mes}"):
-                    # Mostrar tabla solo lectura profesional
                     df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre'])
                     st.dataframe(df_hist, use_container_width=True, hide_index=True)
                     
-                    # Descarga específica por mes
                     csv_h = df_hist.to_csv(index=False).encode('utf-8')
                     st.download_button(label=f"Exportar Consolidado {mes} (CSV)", data=csv_h, 
                                        file_name=f"Historico_NOC_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
