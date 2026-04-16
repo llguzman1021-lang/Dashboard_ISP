@@ -72,6 +72,13 @@ with st.sidebar:
     
     st.divider()
     st.header("📋 Reporte de Incidencias NOC")
+    
+    # NUEVA ARQUITECTURA: Preguntas pre-formulario para permitir la carga interactiva en vivo
+    st.write("⚙️ **Configuración Temporal (Opcional)**")
+    c_glob1, c_glob2 = st.columns(2)
+    conoce_h_i = c_glob1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
+    conoce_h_f = c_glob2.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
+
     with st.form("registro_falla", clear_on_submit=True):
         zona = st.text_input("📍 Localización del Nodo/Zona")
         
@@ -86,8 +93,7 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
 
-        # Novedad: Seleccionamos "No" y "Sí" en ese orden, inician ocultos por defecto
-        conoce_h_i = c1.radio("🕒 ¿Conoce Hora de Inicio?", ["No", "Sí"], horizontal=True)
+        # Inyecta visualmente la hora solo si el switch de arriba está en "Sí"
         if conoce_h_i == "Sí":
             h_i = c2.time_input("🕒 Hora de Apertura")
             hora_inicio_final = h_i.strftime("%H:%M:%S")
@@ -100,17 +106,15 @@ with st.sidebar:
         c_c1, c_c2 = st.columns(2)
         
         f_f = c_c1.date_input("🗓️ Fecha de Cierre")
-        conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora de Cierre?", ["No", "Sí"], horizontal=True)
         
-        st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
-        
-        final_f = f_f.strftime("%d/%m/%Y")
-        
+        # Inyecta visualmente la hora solo si el switch de arriba está en "Sí"
         if conoce_h_f == "Sí":
             h_f = c_c2.time_input("🕒 Hora de Cierre")
             final_h = h_f.strftime("%H:%M:%S")
         else:
             final_h = "N/A"
+
+        st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
 
         # Cálculo de la duración
         duracion = 0
