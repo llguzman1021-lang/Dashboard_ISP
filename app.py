@@ -94,6 +94,8 @@ with st.sidebar:
         hora_inicio_final = h_i.strftime("%H:%M:%S")
     else:
         hora_inicio_final = "N/A"
+        
+st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
 
     st.write("---")
     st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
