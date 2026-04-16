@@ -107,61 +107,77 @@ try:
             # --- GRÁFICAS PROFESIONALES ---
             st.divider()
             
-            # 1. Gráfica de Tendencia (Line Chart) - Análisis de Estabilidad Temporal
+            # 1. Gráfica de Tendencia
             df_trend = df_mes.groupby('Fecha_Convertida').size().reset_index(name='Total_Eventos')
             fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Total_Eventos', 
                                 title="📉 Evolución Diaria de Incidentes de Red",
-                                labels={'Fecha_Convertida': 'Fecha', 'Total_Eventos': 'Cant. Incidentes'},
                                 template="plotly_dark")
             fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
-            fig_trend.update_layout(hovermode="x unified", xaxis_title=None, yaxis_title="N° Incidentes")
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # 2. Gráfica de Distribución (Donut Chart) - Composición de Cartera
+            # 2. Distribución por Categoría
             fig_pie = px.pie(df_mes, names='Categoria', title="📂 Impacto por Segmento de Cliente", 
-                             hole=0.5, template="plotly_dark", 
-                             color_discrete_sequence=['#0068c9', '#ff4b4b'])
+                             hole=0.5, template="plotly_dark", color_discrete_sequence=['#0068c9', '#ff4b4b'])
             fig_pie.update_traces(textposition='outside', textinfo='percent+label')
-            fig_pie.update_layout(showlegend=False)
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # 3. Gráfica de Criticidad por Zona (Bar Chart) - Identificación de Nodos Críticos
+            # 3. Top Zonas
             top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
             fig_bar = px.bar(top_zonas, x='Duracion_Horas', y='Zona', orientation='h',
                              title="📍 Top 5 Zonas con Mayor Tiempo de Inactividad (Horas Acumuladas)",
-                             labels={'Duracion_Horas': 'Total Horas Caídas', 'Zona': 'Nodo/Zona'},
-                             text_auto='.2f', template="plotly_dark",
-                             color='Duracion_Horas', color_continuous_scale='Blues')
-            fig_bar.update_layout(showlegend=False, coloraxis_showscale=False, yaxis={'categoryorder':'total ascending'})
+                             text_auto='.2f', template="plotly_dark", color='Duracion_Horas', color_continuous_scale='Blues')
             st.plotly_chart(fig_bar, use_container_width=True)
 
-            # --- BITÁCORA DEL MES (CON ELIMINACIÓN) ---
+            # --- BITÁCORA DEL MES (CON EDICIÓN Y ELIMINACIÓN) ---
+            st.divider()
             st.subheader(f"🔍 Gestión de Registros: {mes_seleccionado}")
+            st.caption("ℹ️ Puedes editar celdas directamente o usar el checkbox para eliminar registros.")
             
             df_display = df_mes.copy()
             df_display.insert(0, "Seleccionar", False)
             
+            # Editor de datos permitiendo cambios
             edited_df = st.data_editor(
                 df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre']),
                 column_config={
                     "Seleccionar": st.column_config.CheckboxColumn(default=False), 
-                    "gsheet_id": None
+                    "gsheet_id": None, # Oculto pero presente
+                    "Duracion_Horas": st.column_config.NumberColumn(disabled=True) # Cálculo automático
                 },
-                disabled=[c for c in df_display.columns if c != "Seleccionar"],
                 use_container_width=True,
                 hide_index=True,
                 num_rows="fixed",
                 key="main_editor"
             )
 
+            # Lógica para ELIMINAR
             filas_para_eliminar = edited_df[edited_df["Seleccionar"] == True]
             if not filas_para_eliminar.empty:
-                st.warning(f"⚠️ Seleccionaste {len(filas_para_eliminar)} fila(s).")
-                if st.button(f"Confirmar Eliminación de {len(filas_para_eliminar)} registros"):
+                if st.button(f"🗑️ Confirmar Eliminación ({len(filas_para_eliminar)})"):
                     indices = sorted(filas_para_eliminar['gsheet_id'].tolist(), reverse=True)
                     for idx in indices:
                         sheet.delete_rows(idx)
-                    st.success("Registros eliminados.")
+                    st.success("Registros eliminados correctamente.")
+                    time.sleep(1)
+                    st.rerun()
+
+            # Lógica para EDITAR (Detectar si hubo cambios fuera de 'Seleccionar')
+            # Comparamos el dataframe original mostrado (df_display) con el editado
+            original_data = df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre', 'Seleccionar'])
+            edited_data = edited_df.drop(columns=['Seleccionar'])
+            
+            if not original_data.equals(edited_data):
+                if st.button("💾 Guardar Cambios Editados"):
+                    # Buscamos qué filas cambiaron comparando por gsheet_id
+                    for i in range(len(original_data)):
+                        if not original_data.iloc[i].equals(edited_data.iloc[i]):
+                            row_idx = int(edited_data.iloc[i]['gsheet_id'])
+                            # Extraer valores de la fila editada (excluyendo el gsheet_id final)
+                            row_values = edited_data.iloc[i].drop('gsheet_id').tolist()
+                            # Actualizar el rango completo en la fila correspondiente
+                            sheet.update(f"A{row_idx}:K{row_idx}", [row_values])
+                    
+                    st.success("✅ Cambios sincronizados con éxito.")
                     time.sleep(1)
                     st.rerun()
             
@@ -175,7 +191,6 @@ try:
         # --- SECCIÓN: ARCHIVO HISTÓRICO ---
         st.divider()
         st.header("📂 Histórico de Otros Meses")
-        
         meses_con_datos = [m for m in meses_nombres if m in df_total['Mes_Nombre'].unique()]
         otros_meses = [m for m in meses_con_datos if m != mes_seleccionado]
         
@@ -184,7 +199,6 @@ try:
                 with st.expander(f"📁 Bitácora de {mes}"):
                     df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre'])
                     st.dataframe(df_hist, use_container_width=True, hide_index=True)
-                    
                     csv_h = df_hist.to_csv(index=False).encode('utf-8')
                     st.download_button(label=f"Descargar CSV {mes}", data=csv_h, 
                                        file_name=f"Historico_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
