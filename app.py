@@ -86,7 +86,8 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
 
-        conoce_h_i = c1.radio("🕒 ¿Conoce Hora de Apertura?", ["Sí", "No"], horizontal=True)
+        # Novedad: Seleccionamos "No" y "Sí" en ese orden, inician ocultos por defecto
+        conoce_h_i = c1.radio("🕒 ¿Conoce Hora de Inicio?", ["No", "Sí"], horizontal=True)
         if conoce_h_i == "Sí":
             h_i = c2.time_input("🕒 Hora de Apertura")
             hora_inicio_final = h_i.strftime("%H:%M:%S")
@@ -98,11 +99,10 @@ with st.sidebar:
         
         c_c1, c_c2 = st.columns(2)
         
-        # OBLIGATORIO: Ya no se pregunta si se conoce o no la fecha de cierre.
         f_f = c_c1.date_input("🗓️ Fecha de Cierre")
-        conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
+        conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora de Cierre?", ["No", "Sí"], horizontal=True)
         
-        st.info("ℹ️ Si selecciona 'No' en alguna de las horas, el sistema registrará 'N/A' y la duración como 0h.")
+        st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
         
         final_f = f_f.strftime("%d/%m/%Y")
         
@@ -175,6 +175,7 @@ try:
             dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
             horas_totales_mes = dias_mes * 24  # Base 24/7 estándar FTTH
 
+            # FÓRMULA SLA ORIGINAL QUE UTILIZABAS
             downtime_total = df_mes['Duracion_Horas'].sum()
             sla_porcentaje = ((horas_totales_mes - downtime_total) / horas_totales_mes) * 100
             sla_porcentaje = max(0.0, min(100.0, sla_porcentaje))  # Clamp entre 0 y 100
@@ -196,8 +197,8 @@ try:
 
             k_mttr.metric("⏱️ MTTR (Promedio)", f"{avg_mttr:.2f} horas", help="Mean Time To Repair: Tiempo promedio de resolución para incidentes con registros completos.")
             k_imp.metric("👥 Impacto Acumulado", f"{int(df_mes['Clientes_Afectados'].sum())} clientes", help="Total de usuarios/clientes afectados por incidencias en el periodo actual.")
-            k_max.metric("🚨 Máxima Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas", help="El incidente de mayor duración registrado en el mes.")
-            k_down.metric("⏳ Downtime Total", f"{downtime_total:.2f} horas", help="Suma total de horas de inactividad de la infraestructura de red.")
+            k_max.metric("🚨 Máx Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas", help="El incidente temporal de mayor duración registrado en el mes.")
+            k_down.metric("⏳ Downtime Total", f"{downtime_total:.2f} horas", help="Suma total de horas de inactividad global de la infraestructura.")
             k_sla.metric(
                 "📶 Disponibilidad SLA",
                 f"{sla_porcentaje:.3f}%",
@@ -254,16 +255,13 @@ try:
             
             df_display = df_mes.copy()
 
-            # Lógica de Filtrado Local
             if busqueda:
-                # Transforma la tabla a texto y verifica si coincide con lo que el usuario escribió
                 mask = df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
                 df_display = df_display[mask]
                 st.write(f"Resultados encontrados: **{len(df_display)}** registros")
             
             df_display.insert(0, "Seleccionar", False)
             
-            # Opciones actualizadas para la compatibilidad
             conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Falta Hora Cierre)", "Parcial (Falta Hora Inicio)", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
             servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
 
