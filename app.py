@@ -99,7 +99,7 @@ with st.sidebar:
         
         c_c1, c_c2 = st.columns(2)
         conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
-        
+        conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
         st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
         
         c3, c4 = st.columns(2)
