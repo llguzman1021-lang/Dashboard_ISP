@@ -90,6 +90,9 @@ try:
     records = sheet.get_all_records()
     if records:
         df = pd.DataFrame(records)
+        # Mantener el índice original para poder borrar correctamente en Google Sheets
+        df['gsheet_row'] = df.index + 2  # +2 porque gspread es base 1 y la fila 1 es el encabezado
+        
         df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
         
         # Filtrado por Mes Seleccionado
@@ -130,19 +133,47 @@ try:
                              x="Equipo_Afectado", y="Duracion_Horas", template="plotly_dark", color="Equipo_Afectado")
             st.plotly_chart(fig_bar, use_container_width=True)
 
-            # --- SECCIÓN 3: BITÁCORA INTERACTIVA ---
+            # --- SECCIÓN 3: BITÁCORA INTERACTIVA CON OPCIÓN DE ELIMINAR ---
             st.divider()
             st.subheader("🔍 Bitácora e Historial")
+            st.info("💡 Para eliminar: Selecciona la fila y presiona la tecla 'Supr' (Delete) o usa el icono de papelera. Luego presiona el botón 'Confirmar Cambios'.")
             
             # Filtro de búsqueda interactivo
             busqueda = st.text_input("Filtrar por Zona, Equipo o Causa:", "")
+            df_mostrar = df_mes.copy()
             if busqueda:
-                df_mes = df_mes[df_mes.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
+                df_mostrar = df_mostrar[df_mostrar.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
 
-            st.dataframe(df_mes.drop(columns=['Fecha_Convertida']), use_container_width=True)
+            # Editor de datos interactivo
+            # No mostramos la columna técnica 'gsheet_row' ni 'Fecha_Convertida'
+            columnas_visibles = [c for c in df_mostrar.columns if c not in ['gsheet_row', 'Fecha_Convertida']]
+            
+            edited_df = st.data_editor(
+                df_mostrar[ ['gsheet_row'] + columnas_visibles ], 
+                column_config={"gsheet_row": None}, # Ocultar columna de ID técnico
+                use_container_width=True,
+                num_rows="dynamic", # Permite borrar filas
+                key="editor_bitacora"
+            )
+
+            # Lógica para confirmar eliminación
+            if st.button("⚠️ Confirmar Cambios / Eliminar Filas"):
+                # Identificar filas que fueron borradas comparando el DF original con el editado
+                rows_remaining = edited_df['gsheet_row'].tolist()
+                rows_to_delete = [r for r in df_mostrar['gsheet_row'].tolist() if r not in rows_remaining]
+                
+                if rows_to_delete:
+                    # Ordenar de mayor a menor para no arruinar los índices al borrar
+                    for row_idx in sorted(rows_to_delete, reverse=True):
+                        sheet.delete_rows(row_idx)
+                    st.success(f"Se eliminaron {len(rows_to_delete)} registros correctamente.")
+                    time.sleep(1)
+                    st.rerun()
+                else:
+                    st.warning("No se detectaron cambios para eliminar.")
             
             # Botón de Descarga
-            csv = df_mes.to_csv(index=False).encode('utf-8')
+            csv = df_mes.drop(columns=['gsheet_row', 'Fecha_Convertida']).to_csv(index=False).encode('utf-8')
             st.download_button(label="📥 Descargar Reporte Mensual (CSV)", data=csv, 
                                file_name=f"NOC_Report_{mes_seleccionado}.csv", mime='text/csv')
         else:
