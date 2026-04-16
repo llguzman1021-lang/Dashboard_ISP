@@ -86,8 +86,7 @@ with st.sidebar:
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
 
-        # MODIFICACIÓN 1: Opción de conocer hora de inicio
-        conoce_h_i = st.radio("🕒 ¿Conoce Hora de Apertura?", ["Sí", "No"], horizontal=True)
+        conoce_h_i = c1.radio("🕒 ¿Conoce Hora de Apertura?", ["Sí", "No"], horizontal=True)
         if conoce_h_i == "Sí":
             h_i = c2.time_input("🕒 Hora de Apertura")
             hora_inicio_final = h_i.strftime("%H:%M:%S")
@@ -98,58 +97,40 @@ with st.sidebar:
         st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
         
         c_c1, c_c2 = st.columns(2)
-        conoce_f_f = c_c1.radio("🗓️ ¿Conoce Fecha de Cierre?", ["Sí", "No"], horizontal=True)
-        conoce_h_f = c_c2.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
         
-        st.info("ℹ️ Si selecciona 'No' en fecha u hora, el sistema registrará 'N/A' y la duración como 0h.")
+        # OBLIGATORIO: Ya no se pregunta si se conoce o no la fecha de cierre.
+        f_f = c_c1.date_input("🗓️ Fecha de Cierre")
+        conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora de Cierre?", ["Sí", "No"], horizontal=True)
         
-        c3, c4 = st.columns(2)
-        final_f = "N/A"
-        final_h = "N/A"
-        duracion = 0
-        desc_conocimiento = "Total"
-
-        if conoce_f_f == "Sí" and conoce_h_f == "Sí":
-            f_f = c3.date_input("🗓️ Fecha de Cierre")
-            h_f = c4.time_input("🕒 Hora de Cierre")
-            final_f = f_f.strftime("%d/%m/%Y")
+        st.info("ℹ️ Si selecciona 'No' en alguna de las horas, el sistema registrará 'N/A' y la duración como 0h.")
+        
+        final_f = f_f.strftime("%d/%m/%Y")
+        
+        if conoce_h_f == "Sí":
+            h_f = c_c2.time_input("🕒 Hora de Cierre")
             final_h = h_f.strftime("%H:%M:%S")
+        else:
+            final_h = "N/A"
+
+        # Cálculo de la duración
+        duracion = 0
+        if conoce_h_i == "Sí" and conoce_h_f == "Sí":
             desc_conocimiento = "Total"
-            
             try:
-                if conoce_h_i == "Sí":
-                    dt_i = datetime.combine(f_i, h_i)
-                    dt_f = datetime.combine(f_f, h_f)
-                    duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                    if duracion < 0:
-                        st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
-                        duracion = 0
-                        final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
-                else:
+                dt_i = datetime.combine(f_i, h_i)
+                dt_f = datetime.combine(f_f, h_f)
+                duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+                if duracion < 0:
+                    st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
                     duracion = 0
             except:
                 duracion = 0
-                final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
-        
-        elif conoce_f_f == "Sí" and conoce_h_f == "No":
-            f_f = c3.date_input("🗓️ Fecha de Cierre")
-            final_f = f_f.strftime("%d/%m/%Y")
-            final_h = "N/A"
-            duracion = 0
-            desc_conocimiento = "Parcial (Solo Fecha)"
-
-        elif conoce_f_f == "No" and conoce_h_f == "Sí":
-            h_f = c4.time_input("🕒 Hora de Cierre")
-            final_f = "N/A"
-            final_h = h_f.strftime("%H:%M:%S")
-            duracion = 0
-            desc_conocimiento = "Parcial (Solo Hora)"
-        
+        elif conoce_h_i == "No" and conoce_h_f == "No":
+            desc_conocimiento = "Parcial (Solo Fechas)"
+        elif conoce_h_i == "Sí" and conoce_h_f == "No":
+            desc_conocimiento = "Parcial (Falta Hora Cierre)"
         else:
-            final_f = "N/A"
-            final_h = "N/A"
-            duracion = 0
-            desc_conocimiento = "Ninguno"
+            desc_conocimiento = "Parcial (Falta Hora Inicio)"
 
         st.write("---")
         clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
@@ -189,7 +170,6 @@ try:
 
         if not df_mes.empty:
             # --- KPIs ESTRATÉGICOS ---
-            # MODIFICACIÓN SLA: Calcular horas totales del mes seleccionado y % disponibilidad
             mes_index = meses_nombres.index(mes_seleccionado) + 1
             anio_actual = datetime.now().year
             dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
@@ -199,7 +179,6 @@ try:
             sla_porcentaje = ((horas_totales_mes - downtime_total) / horas_totales_mes) * 100
             sla_porcentaje = max(0.0, min(100.0, sla_porcentaje))  # Clamp entre 0 y 100
 
-            # Color del SLA según umbral estándar ISP
             if sla_porcentaje >= 99.9:
                 sla_delta = "✅ Dentro del SLA"
                 sla_delta_color = "normal"
@@ -210,13 +189,11 @@ try:
                 sla_delta = "🚨 SLA Incumplido"
                 sla_delta_color = "inverse"
 
-            # 5 columnas: MTTR, Impacto, Máxima Indisponibilidad, Downtime, SLA
             k_mttr, k_imp, k_max, k_down, k_sla = st.columns(5)
 
             df_mttr = df_mes[df_mes['Duracion_Horas'] > 0]
             avg_mttr = df_mttr['Duracion_Horas'].mean() if not df_mttr.empty else 0
 
-            # MODIFICACIÓN 3: "h" → "horas" y agregar "clientes" en Impacto Acumulado
             k_mttr.metric("⏱️ MTTR (Promedio)", f"{avg_mttr:.2f} horas", help="Mean Time To Repair: Tiempo promedio de resolución para incidentes con registros completos.")
             k_imp.metric("👥 Impacto Acumulado", f"{int(df_mes['Clientes_Afectados'].sum())} clientes", help="Total de usuarios/clientes afectados por incidencias en el periodo actual.")
             k_max.metric("🚨 Máxima Indisponibilidad", f"{df_mes['Duracion_Horas'].max():.2f} horas", help="El incidente de mayor duración registrado en el mes.")
@@ -229,7 +206,6 @@ try:
                 help=f"Disponibilidad mensual de la red sobre base 24/7 ({horas_totales_mes}h). Estándar FTTH mínimo: 99.9%"
             )
 
-            # Gráfica de Composición de Servicio Afectado (KPI Visual)
             st.write("---")
             df_serv = df_mes.groupby('Servicio').size().reset_index(name='Total_Eventos')
             fig_serv_kpi = px.bar(df_serv, x='Total_Eventos', y='Servicio', orientation='h',
@@ -243,7 +219,6 @@ try:
             # --- VISUALIZACIÓN DE ALTO NIVEL ---
             st.divider()
             
-            # 1. Tendencia Temporal
             df_trend = df_mes.groupby('Fecha_Convertida').size().reset_index(name='Total_Eventos')
             fig_trend = px.area(df_trend, x='Fecha_Convertida', y='Total_Eventos', 
                                 title="📊 <b>Análisis de Estabilidad de Red (Día a Día)</b><br><sup>Fluctuación diaria del volumen total de incidentes operativos</sup>",
@@ -252,15 +227,12 @@ try:
             fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # 2. Distribución por Categoría de Cliente
             fig_pie = px.pie(df_mes, names='Categoria', title="📂 <b>Composición de Cartera Afectada</b><br><sup>Distribución porcentual de incidentes por segmento de mercado</sup>", 
                             hole=0.6, template="plotly_dark", color_discrete_sequence=['#0068c9', '#ff4b4b'])
             fig_pie.update_traces(textposition='outside', textinfo='percent+label', textfont_size=13)
             fig_pie.update_layout(showlegend=False, margin=dict(l=0, r=0, t=70, b=0))
             st.plotly_chart(fig_pie, use_container_width=True)
             
-            # 3. Top Zonas Críticas
-            # MODIFICACIÓN 2: text_auto muestra el valor con etiqueta "horas" en la barra
             top_zonas = df_mes.groupby('Zona')['Duracion_Horas'].sum().nlargest(5).reset_index()
             top_zonas.columns = ['Zona', 'Horas Offline']
             top_zonas['Etiqueta'] = top_zonas['Horas Offline'].apply(lambda x: f"{x:.2f} horas")
@@ -277,10 +249,22 @@ try:
             st.subheader(f"🔍 Auditoría y Gestión de Bitácora Operativa: {mes_seleccionado}")
             st.caption("ℹ️ Los cambios en fechas, horas o tipo de conocimiento recalcularán automáticamente la duración al sincronizar.")
             
+            # --- BARRA DE BÚSQUEDA ---
+            busqueda = st.text_input("🔎 Buscar en registros operativos:", placeholder="Buscar por zona, equipo, estado, servicio...")
+            
             df_display = df_mes.copy()
+
+            # Lógica de Filtrado Local
+            if busqueda:
+                # Transforma la tabla a texto y verifica si coincide con lo que el usuario escribió
+                mask = df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
+                df_display = df_display[mask]
+                st.write(f"Resultados encontrados: **{len(df_display)}** registros")
+            
             df_display.insert(0, "Seleccionar", False)
             
-            conoce_opciones = ["Total", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
+            # Opciones actualizadas para la compatibilidad
+            conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Falta Hora Cierre)", "Parcial (Falta Hora Inicio)", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
             servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
 
             edited_df = st.data_editor(
