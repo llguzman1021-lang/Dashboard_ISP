@@ -197,6 +197,13 @@ try:
     if records:
         df_total = pd.DataFrame(records)
         df_total['gsheet_id'] = range(2, len(df_total) + 2)
+        
+        # --- AUTO-DETECCIÓN INTELIGENTE DE ENCABEZADOS EN GDOCS ---
+        # Soluciona cualquier cambio de nombre en las columnas "Equipo" o "Causa" sin tirar error.
+        cols_drive = df_total.columns.tolist()
+        COL_EQUIPO = next((c for c in cols_drive if 'equip' in c.lower()), cols_drive[3] if len(cols_drive) > 3 else 'Equipo')
+        COL_CAUSA = next((c for c in cols_drive if 'causa' in c.lower() or 'diag' in c.lower()), cols_drive[9] if len(cols_drive) > 9 else 'Causa')
+        
         df_total['Fecha_Convertida'] = pd.to_datetime(df_total['Fecha_Inicio'], dayfirst=True, errors='coerce')
         df_total['Mes_Nombre'] = df_total['Fecha_Convertida'].dt.month.map(lambda x: meses_nombres[int(x)-1] if pd.notnull(x) else None)
 
@@ -212,12 +219,12 @@ try:
                 
                 f_zonas = col_f1.multiselect("Filtrar Zona Geográfica", options=df_mes['Zona'].unique().tolist())
                 f_cats = col_f2.multiselect("Segmento Comercial", options=df_mes['Categoria'].unique().tolist())
-                f_eqs = col_f3.multiselect("Equipamiento Afectado", options=df_mes['Equipo'].unique().tolist())
+                f_eqs = col_f3.multiselect("Equipamiento Afectado", options=df_mes[COL_EQUIPO].unique().tolist())
             
             df_filtrado = df_mes.copy()
             if f_zonas: df_filtrado = df_filtrado[df_filtrado['Zona'].isin(f_zonas)]
             if f_cats: df_filtrado = df_filtrado[df_filtrado['Categoria'].isin(f_cats)]
-            if f_eqs: df_filtrado = df_filtrado[df_filtrado['Equipo'].isin(f_eqs)]
+            if f_eqs: df_filtrado = df_filtrado[df_filtrado[COL_EQUIPO].isin(f_eqs)]
 
             if df_filtrado.empty:
                 st.warning("⚠️ No existen registros con la combinación de filtros analíticos actual.")
@@ -240,7 +247,7 @@ try:
                     df_pasado = df_total[df_total['Mes_Nombre'] == mes_pasado_nom].copy()
                     if f_zonas: df_pasado = df_pasado[df_pasado['Zona'].isin(f_zonas)]
                     if f_cats: df_pasado = df_pasado[df_pasado['Categoria'].isin(f_cats)]
-                    if f_eqs: df_pasado = df_pasado[df_pasado['Equipo'].isin(f_eqs)]
+                    if f_eqs: df_pasado = df_pasado[df_pasado[COL_EQUIPO].isin(f_eqs)]
                     
                     if not df_pasado.empty:
                         _, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, dias_pasado * 24)
@@ -272,23 +279,21 @@ try:
                 st.divider()
                 st.subheader(f"📈 Inteligencia de Rendimiento: {mes_seleccionado}")
                 
-                # Fila 1: Salud Hardware y Causa Raíz
                 col_g1, col_g2 = st.columns(2)
                 
-                df_req = df_filtrado.groupby('Equipo').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
-                fig_eq = px.bar(df_req, x='Fallos', y='Equipo', orientation='h', color='Fallos',
+                df_req = df_filtrado.groupby(COL_EQUIPO).size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
+                fig_eq = px.bar(df_req, x='Fallos', y=COL_EQUIPO, orientation='h', color='Fallos',
                                 title="⚙️ <b>Hardware Health & Reliability</b>", template="plotly_dark", color_continuous_scale="Reds")
                 fig_eq.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=60, b=0))
                 col_g1.plotly_chart(fig_eq, use_container_width=True)
 
-                df_caus = df_filtrado.groupby('Causa').size().reset_index(name='Alertas')
-                fig_rca = px.pie(df_caus, names='Causa', values='Alertas', hole=0.5,
+                df_caus = df_filtrado.groupby(COL_CAUSA).size().reset_index(name='Alertas')
+                fig_rca = px.pie(df_caus, names=COL_CAUSA, values='Alertas', hole=0.5,
                                 title="🔍 <b>Análisis de Causa Raíz (RCA)</b>", template="plotly_dark")
                 fig_rca.update_traces(textposition='inside', textinfo='percent+label', marker=dict(line=dict(color='#000000', width=1)))
                 fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
                 col_g2.plotly_chart(fig_rca, use_container_width=True)
                 
-                # Fila 2: Diagrama de Dispersión / Matriz de Riesgo Geográfico
                 df_riesgo = df_filtrado.groupby('Zona').agg(Frecuencia=('gsheet_id', 'count'), Horas_Down=('Duracion_Horas', 'sum'), Afect_Totales=('Clientes_Afectados', 'sum')).reset_index()
                 if not df_riesgo.empty and df_riesgo['Afect_Totales'].sum() > 0:
                     fig_sc = px.scatter(df_riesgo, x='Frecuencia', y='Horas_Down', size='Afect_Totales', color='Zona',
@@ -298,7 +303,7 @@ try:
                     fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True)
                     st.plotly_chart(fig_sc, use_container_width=True)
 
-                # --- VISUALIZACIONES CLÁSICAS CUIDADAS ---
+                # --- VISUALIZACIONES ESTADÍSTICAS ---
                 st.divider()
                 
                 df_trend = df_filtrado.groupby('Fecha_Convertida').size().reset_index(name='Total_Eventos')
@@ -308,6 +313,7 @@ try:
                                     template="plotly_dark")
                 fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
                 st.plotly_chart(fig_trend, use_container_width=True)
+
 
                 # --- BITÁCORA INTELIGENTE PROTEGIDA ---
                 st.divider()
@@ -369,7 +375,6 @@ try:
                                         fila = edited_data.iloc[i].copy()
                                         row_idx = int(fila['gsheet_id'])
                                         
-                                        # Recalcular interno solo editado (código simplificado resguarda gsheets)
                                         f_i_s, h_i_s = str(fila['Fecha_Inicio']), str(fila['Hora_Inicio'])
                                         f_f_s, h_f_s = str(fila['Fecha_Fin']), str(fila['Hora_Fin'])
                                         conoce_s = str(fila['Conocimiento_Tiempos'])
@@ -392,12 +397,12 @@ try:
                                 time.sleep(1)
                                 st.rerun()
                     else:
-                        st.error("🛑 Módulo Directivo Protegido. Inserte el Passcode ('1010') del panel contiguo para confirmar eliminación y alterado de datos.")
+                        st.error("🛑 Módulo Directivo Protegido. Inserte el Passcode ('1010') del panel contiguo para confirmar eliminación y alteración de datos.")
                 
                 # Exportación
                 st.write("---")
                 csv_m = df_filtrado.drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
-                st.download_button(f"📥 Exportar Reporte En Pantalla {mes_seleccionado} (CSV)", data=csv_m, file_name=f"Reporte_NOC_{mes_seleccionado}.csv", mime='text/csv')
+                st.download_button(f"📥 Exportar Reporte {mes_seleccionado} (CSV)", data=csv_m, file_name=f"Reporte_NOC_{mes_seleccionado}.csv", mime='text/csv')
 
         else:
             st.info(f"Ausencia de registros para {mes_seleccionado}.")
