@@ -185,6 +185,8 @@ with st.sidebar:
         "Daños por Fauna Silvestre o Aves (Zonas Boscosas/Rurales)",
         "Falla de Hardware (Desgaste, Daño o Sobrecalentamiento)",
         "Desajuste de Configuración Lógica (Software/Routing)",
+        "Falla de Redundancia en Anillo de Fibra",
+        "Saturación de Tráfico o Cuello de Botella en la Red",
         "Mantenimiento Programado o Ventana de Trabajo",
         "Vandalismo, Hurto o Sabotaje Directo",
         "Condiciones Climáticas Adversas (Tormentas, Fuertes Vientos)"
@@ -318,9 +320,13 @@ try:
             with st.expander("🔎 Filtrar Datos Mostrados (Zonas, Equipos, Servicios...)", expanded=False):
                 col_f1, col_f2, col_f3 = st.columns(3)
                 
-                f_zonas = col_f1.multiselect("Filtrar Zona Geográfica", options=df_mes['Zona'].unique().tolist())
-                f_cats = col_f2.multiselect("Segmento Comercial", options=df_mes['Categoria'].unique().tolist())
-                f_eqs = col_f3.multiselect("Equipamiento Afectado", options=df_mes[COL_EQUIPO].unique().tolist())
+                zonas_fijas = ["El Rosario", "La Costa del Sol", "La Libertad", "Rio Mar", "El Tunco", "Zaragoza", "Zacatecoluca", "San Salvador", "San Miguel Tepezontes", "ARG", "Santiago Nonualco"]
+                categorias_fijas = ["Red Multinet (Troncal)", "Cliente Corporativo"]
+                equipos_fijos = ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"]
+                
+                f_zonas = col_f1.multiselect("Filtrar Zona Geográfica", options=zonas_fijas)
+                f_cats = col_f2.multiselect("Segmento Comercial", options=categorias_fijas)
+                f_eqs = col_f3.multiselect("Equipamiento Afectado", options=equipos_fijos)
             
             df_filtrado = df_mes.copy()
             if f_zonas: df_filtrado = df_filtrado[df_filtrado['Zona'].isin(f_zonas)]
@@ -376,7 +382,7 @@ try:
                 k5.metric("📈 Porcentaje de Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, delta_color="normal", help="Nivel integral de servicio operativo (Service Level Agreement) basado en las horas del mes.")
                 k6.metric("📉 Promedio de Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas / cliente", delta=delta_a, delta_color="inverse", help="Promedio estadístico de horas continuas en las que un cliente experimentó interrupción de servicio (Afectación Promedio).")
                 
-                st.caption("ℹ️ **Nota Técnica sobre Cuantificación:** Las cifras de usuarios interrumpidos presentadas son aproximaciones estadísticas. Aquellos registros carentes de telemetría o precisión exacta (típicamente eventos históricos) se computan con un impacto base para no sesgar drásticamente el análisis global de horas/cliente.")
+                st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto (como en fallas generales o registros antiguos), el sistema usa un valor base para no alterar los promedios.")
 
                 # --- VISUALIZACIÓN MULTI-FACTOR (LAS NUEVAS GRÁFICAS KPI) ---
                 st.divider()
