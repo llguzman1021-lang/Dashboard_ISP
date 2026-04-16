@@ -81,8 +81,8 @@ with st.sidebar:
         
         equipo = st.selectbox("⚙️ Equipamiento Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
         
-        st.write("---")
-        st.write("⏱️ **Ventana Temporal de Inicio**")
+st.write("---")
+st.write("⏱️ **Ventana Temporal de Inicio**")
         c1, c2 = st.columns(2)
         f_i = c1.date_input("🗓️ Fecha de Inicio")
 
@@ -94,8 +94,8 @@ with st.sidebar:
         else:
             hora_inicio_final = "N/A"
 
-        st.write("---")
-        st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
+st.write("---")
+st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
         
         c_c1, c_c2 = st.columns(2)
 
@@ -142,9 +142,9 @@ try:
 except:
     duracion = 0
 
-        st.write("---")
-        clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
-        causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
+st.write("---")
+clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
+causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
             "Corte de Fibra Óptica", 
             "Inestabilidad Suministro Eléctrico", 
             "Desajuste de Configuración", 
