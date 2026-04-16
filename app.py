@@ -39,11 +39,11 @@ st.markdown("""
 with st.sidebar:
     st.title("⚙️ Panel de Control")
     
+    meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
+                     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
+    
     mes_actual_num = datetime.now().month
-    mes_seleccionado = st.selectbox("📅 Seleccionar Mes de Análisis", 
-                                    ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", 
-                                     "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"],
-                                    index=mes_actual_num-1)
+    mes_seleccionado = st.selectbox("📅 Seleccionar Mes de Análisis", meses_nombres, index=mes_actual_num-1)
     
     st.divider()
     st.header("📝 Registro de Incidente")
@@ -87,87 +87,94 @@ with st.sidebar:
 try:
     records = sheet.get_all_records()
     if records:
-        df = pd.DataFrame(records)
-        # Guardamos la posición real de la fila en Google Sheets (base 1 + encabezado)
-        df['gsheet_id'] = range(2, len(df) + 2)
-        df['Fecha_Convertida'] = pd.to_datetime(df['Fecha_Inicio'], dayfirst=True, errors='coerce')
-        
-        meses_dict = {"Enero":1, "Febrero":2, "Marzo":3, "Abril":4, "Mayo":5, "Junio":6, 
-                      "Julio":7, "Agosto":8, "Septiembre":9, "Octubre":10, "Noviembre":11, "Diciembre":12}
-        df_mes = df[df['Fecha_Convertida'].dt.month == meses_dict[mes_seleccionado]].copy()
+        df_total = pd.DataFrame(records)
+        # ID para gestión de filas en Google Sheets
+        df_total['gsheet_id'] = range(2, len(df_total) + 2)
+        df_total['Fecha_Convertida'] = pd.to_datetime(df_total['Fecha_Inicio'], dayfirst=True, errors='coerce')
+        # Extraer nombre del mes para agrupamiento
+        df_total['Mes_Nombre'] = df_total['Fecha_Convertida'].dt.month.map(lambda x: meses_nombres[int(x)-1] if pd.notnull(x) else None)
+
+        # 1. Filtrado para el Dashboard Principal (Mes seleccionado)
+        df_mes = df_total[df_total['Mes_Nombre'] == mes_seleccionado].copy()
 
         st.title(f"📊 Dashboard NOC: {mes_seleccionado} {datetime.now().year}")
 
         if not df_mes.empty:
-            # --- SECCIÓN 1: KPIs ---
+            # --- KPIs ---
             k1, k2, k3, k4 = st.columns(4)
-            avg_duracion = df_mes['Duracion_Horas'].mean()
-            total_impacto = df_mes['Clientes_Afectados'].sum()
-            caida_critica = df_mes['Duracion_Horas'].max()
-            duracion_total = df_mes['Duracion_Horas'].sum()
+            k1.metric("⏱️ MTTR Promedio", f"{df_mes['Duracion_Horas'].mean():.2f} h")
+            k2.metric("👥 Impacto Total", f"{int(df_mes['Clientes_Afectados'].sum())} Clientes")
+            k3.metric("🚨 Máx Caída", f"{df_mes['Duracion_Horas'].max():.2f} h")
+            k4.metric("⏳ Acumulado", f"{df_mes['Duracion_Horas'].sum():.2f} h")
 
-            k1.metric("⏱️ MTTR Promedio", f"{avg_duracion:.2f} Horas")
-            k2.metric("👥 Impacto Total", f"{int(total_impacto)} Clientes")
-            k3.metric("🚨 Caída más Crítica", f"{caida_critica:.2f} Horas")
-            k4.metric("⏳ Duración Acumulada", f"{duracion_total:.2f} Horas")
-
-            # --- SECCIÓN 2: GRÁFICAS ---
+            # --- GRÁFICAS ---
             st.divider()
-            st.subheader("📈 Volumen Mensual de Fallas")
             fig_trend = px.line(df_mes.groupby('Fecha_Convertida').size().reset_index(name='Cant'), 
-                                x='Fecha_Convertida', y='Cant', markers=True, template="plotly_dark")
+                                x='Fecha_Convertida', y='Cant', title="Tendencia de Fallas", markers=True, template="plotly_dark")
             fig_trend.update_traces(line_color='#0068c9')
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # --- SECCIÓN 3: BITÁCORA INTERACTIVA ---
-            st.divider()
-            st.subheader("🔍 Bitácora e Historial")
+            # --- BITÁCORA DEL MES (CON ELIMINACIÓN) ---
+            st.subheader(f"🔍 Gestión de Registros: {mes_seleccionado}")
             
-            # Filtro de búsqueda
-            busqueda = st.text_input("Filtrar por palabra clave:", "")
             df_display = df_mes.copy()
-            if busqueda:
-                df_display = df_display[df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False)).any(axis=1)]
-
-            # Agregamos columna de selección al inicio
             df_display.insert(0, "Seleccionar", False)
             
-            # Configuramos el editor para que solo la columna "Seleccionar" sea editable
+            # Editor configurado: solo permite seleccionar el Checkbox, no editar datos ni agregar filas
             edited_df = st.data_editor(
-                df_display.drop(columns=['Fecha_Convertida']),
+                df_display.drop(columns=['Fecha_Convertida', 'Mes_Nombre']),
                 column_config={
-                    "Seleccionar": st.column_config.CheckboxColumn(help="Selecciona para eliminar", default=False),
-                    "gsheet_id": None # Ocultamos el ID técnico
+                    "Seleccionar": st.column_config.CheckboxColumn(default=False), 
+                    "gsheet_id": None
                 },
-                disabled=[c for c in df_display.columns if c != "Seleccionar"], # Bloquea el resto de columnas
+                disabled=[c for c in df_display.columns if c != "Seleccionar"],
                 use_container_width=True,
                 hide_index=True,
-                key="tabla_bitacora"
+                num_rows="fixed", # Impide agregar filas desde la tabla
+                key="main_editor"
             )
 
-            # Lógica de eliminación
             filas_para_eliminar = edited_df[edited_df["Seleccionar"] == True]
-
             if not filas_para_eliminar.empty:
-                st.warning(f"⚠️ Has seleccionado {len(filas_para_eliminar)} registro(s) para eliminar.")
-                if st.button("Confirmar Eliminación Permanente"):
-                    # Ordenar de mayor a menor para no alterar los índices de las filas restantes al borrar
-                    indices_a_borrar = sorted(filas_para_eliminar['gsheet_id'].tolist(), reverse=True)
-                    
-                    with st.spinner("Eliminando registros..."):
-                        for idx in indices_a_borrar:
-                            sheet.delete_rows(idx)
-                    
-                    st.success("Registros eliminados correctamente.")
+                st.warning(f"⚠️ Seleccionaste {len(filas_para_eliminar)} fila(s).")
+                if st.button(f"Confirmar Eliminación de {len(filas_para_eliminar)} registros"):
+                    indices = sorted(filas_para_eliminar['gsheet_id'].tolist(), reverse=True)
+                    for idx in indices:
+                        sheet.delete_rows(idx)
+                    st.success("Registros eliminados.")
                     time.sleep(1)
                     st.rerun()
             
-            # Botón de Descarga
-            csv = df_mes.drop(columns=['gsheet_id', 'Fecha_Convertida']).to_csv(index=False).encode('utf-8')
-            st.download_button(label="📥 Descargar Reporte Mensual (CSV)", data=csv, 
-                               file_name=f"NOC_Report_{mes_seleccionado}.csv", mime='text/csv')
+            # Botón de Descarga para el mes actual
+            csv_m = df_mes.drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre']).to_csv(index=False).encode('utf-8')
+            st.download_button(label=f"📥 Descargar CSV {mes_seleccionado}", data=csv_m, 
+                               file_name=f"Reporte_{mes_seleccionado}.csv", mime='text/csv')
+
         else:
             st.info(f"No hay registros encontrados para el mes de {mes_seleccionado}.")
+
+        # --- SECCIÓN: ARCHIVO HISTÓRICO (OTROS MESES) ---
+        st.divider()
+        st.header("📂 Histórico de Otros Meses")
+        
+        # Filtrar meses que tienen datos pero no son el seleccionado actualmente
+        meses_con_datos = [m for m in meses_nombres if m in df_total['Mes_Nombre'].unique()]
+        otros_meses = [m for m in meses_con_datos if m != mes_seleccionado]
+        
+        if otros_meses:
+            for mes in otros_meses:
+                with st.expander(f"📁 Bitácora de {mes}"):
+                    # Mostrar tabla solo lectura
+                    df_hist = df_total[df_total['Mes_Nombre'] == mes].drop(columns=['gsheet_id', 'Fecha_Convertida', 'Mes_Nombre'])
+                    st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                    
+                    # Descarga específica por mes
+                    csv_h = df_hist.to_csv(index=False).encode('utf-8')
+                    st.download_button(label=f"Descargar CSV {mes}", data=csv_h, 
+                                       file_name=f"Historico_{mes}.csv", mime='text/csv', key=f"btn_{mes}")
+        else:
+            st.info("No hay registros históricos en otros meses.")
+
     else:
         st.info("La base de datos está vacía.")
 except Exception as e:
