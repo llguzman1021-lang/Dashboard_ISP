@@ -112,20 +112,17 @@ try:
             fig_trend.update_traces(line_color='#0068c9')
             st.plotly_chart(fig_trend, use_container_width=True)
 
-            # 2. Distribución y Top Zonas
-            col_g1, col_g2 = st.columns(2)
+            # 2. Distribución por Categoría
+            fig_pie = px.pie(df_mes, names='Categoria', title="Distribución por Categoría", 
+                             hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Safe)
+            st.plotly_chart(fig_pie, use_container_width=True)
             
-            with col_g1:
-                fig_pie = px.pie(df_mes, names='Categoria', title="Distribución por Categoría", 
-                                 hole=0.4, template="plotly_dark", color_discrete_sequence=px.colors.qualitative.Safe)
-                st.plotly_chart(fig_pie, use_container_width=True)
-            
-            with col_g2:
-                top_zonas = df_mes['Zona'].value_counts().nlargest(5).reset_index()
-                top_zonas.columns = ['Zona', 'Fallas']
-                fig_bar = px.bar(top_zonas, x='Zona', y='Fallas', title="Top 5 Zonas con más Fallas",
-                                 text_auto=True, template="plotly_dark", color='Fallas', color_continuous_scale='Blues')
-                st.plotly_chart(fig_bar, use_container_width=True)
+            # 3. Top Zonas
+            top_zonas = df_mes['Zona'].value_counts().nlargest(5).reset_index()
+            top_zonas.columns = ['Zona', 'Fallas']
+            fig_bar = px.bar(top_zonas, x='Zona', y='Fallas', title="Top 5 Zonas con más Fallas",
+                             text_auto=True, template="plotly_dark", color='Fallas', color_continuous_scale='Blues')
+            st.plotly_chart(fig_bar, use_container_width=True)
 
             # --- BITÁCORA DEL MES (CON ELIMINACIÓN) ---
             st.subheader(f"🔍 Gestión de Registros: {mes_seleccionado}")
