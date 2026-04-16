@@ -84,7 +84,6 @@ with st.sidebar:
     st.write("---")
     st.write("⏱️ **Ventana Temporal de Inicio**")
     
-    # ESTRUCTURA CORREGIDA: Columna 1 (Fecha arriba, Pregunta abajo) | Columna 2 (La hora emerge paralela a la fecha)
     c1, c2 = st.columns(2)
     f_i = c1.date_input("🗓️ Fecha de Inicio")
     conoce_h_i = c1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
@@ -94,6 +93,8 @@ with st.sidebar:
         hora_inicio_final = h_i.strftime("%H:%M:%S")
     else:
         hora_inicio_final = "N/A"
+
+    st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
 
     st.write("---")
     st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
