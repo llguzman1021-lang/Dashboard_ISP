@@ -113,35 +113,34 @@ final_f = f_f.strftime("%d/%m/%Y")
 final_h = "N/A"
 duracion = 0
 desc_conocimiento = "Total"
-            
-            try:
-                if conoce_h_i == "Sí":
-                    dt_i = datetime.combine(f_i, h_i)
-                    dt_f = datetime.combine(f_f, h_f)
-                    duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                    if duracion < 0:
-                        st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
-                        duracion = 0
-                        final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
-                else:
-                    duracion = 0
-            except:
-                duracion = 0
-                final_f, final_h, desc_conocimiento = "N/A", "N/A", "N/A"
-        
-        elif conoce_f_f == "Sí" and conoce_h_f == "No":
-            f_f = c3.date_input("🗓️ Fecha de Cierre")
-            final_f = f_f.strftime("%d/%m/%Y")
-            final_h = "N/A"
-            duracion = 0
-            desc_conocimiento = "Parcial (Solo Fecha)"
 
-        elif conoce_f_f == "No" and conoce_h_f == "Sí":
-            h_f = c4.time_input("🕒 Hora de Cierre")
-            final_f = "N/A"
-            final_h = h_f.strftime("%H:%M:%S")
+# Hora de cierre
+if conoce_h_f == "Sí":
+    h_f = c4.time_input("🕒 Hora de Cierre")
+    final_h = h_f.strftime("%H:%M:%S")
+
+# Tipo de conocimiento
+if conoce_h_i == "Sí" and conoce_h_f == "Sí":
+    desc_conocimiento = "Total"
+elif conoce_h_i == "Sí" or conoce_h_f == "Sí":
+    desc_conocimiento = "Parcial"
+else:
+    desc_conocimiento = "Ninguno"
+
+# Cálculo de duración
+try:
+    if conoce_h_i == "Sí" and conoce_h_f == "Sí":
+        dt_i = datetime.combine(f_i, h_i)
+        dt_f = datetime.combine(f_f, h_f)
+        duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+
+        if duracion < 0:
+            st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
             duracion = 0
-            desc_conocimiento = "Parcial (Solo Hora)"
+    else:
+        duracion = 0
+except:
+    duracion = 0
         
         else:
             final_f = "N/A"
