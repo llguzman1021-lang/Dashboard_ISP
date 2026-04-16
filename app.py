@@ -73,91 +73,88 @@ with st.sidebar:
     st.divider()
     st.header("📋 Reporte de Incidencias NOC")
     
-    # NUEVA ARQUITECTURA: Preguntas pre-formulario para permitir la carga interactiva en vivo
-    st.write("⚙️ **Configuración Temporal (Opcional)**")
-    c_glob1, c_glob2 = st.columns(2)
-    conoce_h_i = c_glob1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
-    conoce_h_f = c_glob2.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
+    zona = st.text_input("📍 Localización del Nodo/Zona")
+    
+    c_serv1, c_serv2 = st.columns([2, 3])
+    servicio = c_serv1.selectbox("📡 Servicio Afectado", ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"])
+    categoria = c_serv2.selectbox("👥 Segmentación de Impacto", ["Red Multinet (Troncal)", "Cliente Corporativo"])
+    
+    equipo = st.selectbox("⚙️ Equipamiento Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
+    
+    st.write("---")
+    st.write("⏱️ **Ventana Temporal de Inicio**")
+    
+    f_i = st.date_input("🗓️ Fecha de Inicio")
+    
+    c1, c2 = st.columns(2)
+    # Vuelven a su posición exacta debajo de la fecha (Conoce Hora de Inicio)
+    conoce_h_i = c1.radio("🕒 ¿Conoce Hora Inicio?", ["No", "Sí"], horizontal=True)
+    if conoce_h_i == "Sí":
+        h_i = c2.time_input("🕒 Hora de Apertura")
+        hora_inicio_final = h_i.strftime("%H:%M:%S")
+    else:
+        hora_inicio_final = "N/A"
 
-    with st.form("registro_falla", clear_on_submit=True):
-        zona = st.text_input("📍 Localización del Nodo/Zona")
-        
-        c_serv1, c_serv2 = st.columns([2, 3])
-        servicio = c_serv1.selectbox("📡 Servicio Afectado", ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"])
-        categoria = c_serv2.selectbox("👥 Segmentación de Impacto", ["Red Multinet (Troncal)", "Cliente Corporativo"])
-        
-        equipo = st.selectbox("⚙️ Equipamiento Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
-        
-        st.write("---")
-        st.write("⏱️ **Ventana Temporal de Inicio**")
-        c1, c2 = st.columns(2)
-        f_i = c1.date_input("🗓️ Fecha de Inicio")
+    st.write("---")
+    st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
+    
+    f_f = st.date_input("🗓️ Fecha de Cierre")
+    
+    c_c1, c_c2 = st.columns(2)
+    # Vuelven a su posición exacta debajo de la fecha (Conoce Hora de Cierre)
+    conoce_h_f = c_c1.radio("🕒 ¿Conoce Hora Cierre?", ["No", "Sí"], horizontal=True)
+    
+    if conoce_h_f == "Sí":
+        h_f = c_c2.time_input("🕒 Hora de Cierre")
+        final_h = h_f.strftime("%H:%M:%S")
+    else:
+        final_h = "N/A"
 
-        # Inyecta visualmente la hora solo si el switch de arriba está en "Sí"
-        if conoce_h_i == "Sí":
-            h_i = c2.time_input("🕒 Hora de Apertura")
-            hora_inicio_final = h_i.strftime("%H:%M:%S")
-        else:
-            hora_inicio_final = "N/A"
+    st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
 
-        st.write("---")
-        st.write("📉 **Estado de Cierre (Cálculo de Tiempos)**")
-        
-        c_c1, c_c2 = st.columns(2)
-        
-        f_f = c_c1.date_input("🗓️ Fecha de Cierre")
-        
-        # Inyecta visualmente la hora solo si el switch de arriba está en "Sí"
-        if conoce_h_f == "Sí":
-            h_f = c_c2.time_input("🕒 Hora de Cierre")
-            final_h = h_f.strftime("%H:%M:%S")
-        else:
-            final_h = "N/A"
-
-        st.info("ℹ️ Tenga en cuenta: Si la hora no es especificada, el sistema registrará 'N/A' y la duración será 0h.")
-
-        # Cálculo de la duración
-        duracion = 0
-        if conoce_h_i == "Sí" and conoce_h_f == "Sí":
-            desc_conocimiento = "Total"
-            try:
-                dt_i = datetime.combine(f_i, h_i)
-                dt_f = datetime.combine(f_f, h_f)
-                duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
-                if duracion < 0:
-                    st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
-                    duracion = 0
-            except:
+    # Cálculo de la duración
+    duracion = 0
+    if conoce_h_i == "Sí" and conoce_h_f == "Sí":
+        desc_conocimiento = "Total"
+        try:
+            dt_i = datetime.combine(f_i, h_i)
+            dt_f = datetime.combine(f_f, h_f)
+            duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
+            if duracion < 0:
+                st.error("Error: La fecha/hora de cierre no puede ser anterior a la de inicio.")
                 duracion = 0
-        elif conoce_h_i == "No" and conoce_h_f == "No":
-            desc_conocimiento = "Parcial (Solo Fechas)"
-        elif conoce_h_i == "Sí" and conoce_h_f == "No":
-            desc_conocimiento = "Parcial (Falta Hora Cierre)"
-        else:
-            desc_conocimiento = "Parcial (Falta Hora Inicio)"
+        except:
+            duracion = 0
+    elif conoce_h_i == "No" and conoce_h_f == "No":
+        desc_conocimiento = "Parcial (Solo Fechas)"
+    elif conoce_h_i == "Sí" and conoce_h_f == "No":
+        desc_conocimiento = "Parcial (Falta Hora Cierre)"
+    else:
+        desc_conocimiento = "Parcial (Falta Hora Inicio)"
 
-        st.write("---")
-        clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
-        causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
-            "Corte de Fibra Óptica", 
-            "Inestabilidad Suministro Eléctrico", 
-            "Desajuste de Configuración", 
-            "Vandalismo / Sabotaje", 
-            "Degradación de Hardware",
-            "Condiciones Atmosféricas Adversas",
-            "Daños por Fauna Sinantrópica"
-        ])
-        desc = st.text_area("📝 Detalles Técnicos / Descripción")
-        
-        if st.form_submit_button("Guardar Registro Operativo"):
-            nueva_fila = [
-                zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), hora_inicio_final, 
-                final_f, final_h, int(clientes), causa, desc, duracion, desc_conocimiento
-            ]
-            sheet.append_row(nueva_fila)
-            st.toast("✅ Base de datos operativa actualizada satisfactoriamente")
-            time.sleep(1)
-            st.rerun()
+    st.write("---")
+    clientes = st.number_input("👥 Usuarios/Clientes Afectados", min_value=0, step=1)
+    causa = st.selectbox("🔍 Diagnóstico Causa Raíz", [
+        "Corte de Fibra Óptica", 
+        "Inestabilidad Suministro Eléctrico", 
+        "Desajuste de Configuración", 
+        "Vandalismo / Sabotaje", 
+        "Degradación de Hardware",
+        "Condiciones Atmosféricas Adversas",
+        "Daños por Fauna Sinantrópica"
+    ])
+    desc = st.text_area("📝 Detalles Técnicos / Descripción")
+    
+    # Botón dinámico (Hace las funciones del formulario antiguo de borrar e insertar línea en drive a la vez)
+    if st.button("Guardar Registro Operativo"):
+        nueva_fila = [
+            zona, servicio, categoria, equipo, f_i.strftime("%d/%m/%Y"), hora_inicio_final, 
+            final_f, final_h, int(clientes), causa, desc, duracion, desc_conocimiento
+        ]
+        sheet.append_row(nueva_fila)
+        st.toast("✅ Base de datos operativa actualizada satisfactoriamente")
+        time.sleep(1)
+        st.rerun()
 
 # --- PROCESAMIENTO Y ANALÍTICA DE DATOS ---
 try:
@@ -179,7 +176,7 @@ try:
             dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
             horas_totales_mes = dias_mes * 24  # Base 24/7 estándar FTTH
 
-            # FÓRMULA SLA ORIGINAL QUE UTILIZABAS
+            # FÓRMULA SLA ORIGINAL
             downtime_total = df_mes['Duracion_Horas'].sum()
             sla_porcentaje = ((horas_totales_mes - downtime_total) / horas_totales_mes) * 100
             sla_porcentaje = max(0.0, min(100.0, sla_porcentaje))  # Clamp entre 0 y 100
