@@ -391,11 +391,32 @@ try:
                 st.divider()
                 st.subheader(f"📈 Análisis Visual del Rendimiento Operativo")
                 
-                # Fila 1: Motivos y Hardware (Las nuevas)
                 col_g1, col_g2 = st.columns(2)
                 
                 df_caus = df_filtrado.groupby(COL_CAUSA).size().reset_index(name='Alertas')
-                fig_rca = px.pie(df_caus, names=COL_CAUSA, values='Alertas', hole=0.5,
+                
+                # Mapeo para nombres más cortos en la gráfica
+                causas_cortas = {
+                    "Corte de Fibra por Terceros": "Terceros",
+                    "Corte de Fibra (No Especificado)": "Fibra",
+                    "Caída de Árboles sobre Fibra": "Árboles",
+                    "Falla de Energía Comercial": "Energía",
+                    "Corrosión en Equipos": "Corrosión",
+                    "Daños por Fauna": "Fauna",
+                    "Falla de Hardware": "Hardware",
+                    "Falla de Configuración": "Configuración",
+                    "Falla de Redundancia": "Redundancia",
+                    "Saturación de Tráfico": "Saturación",
+                    "Saturación en Servidor UNIFI": "Sat. UNIFI",
+                    "Falla de Inicio en UNIFI": "Inic. UNIFI",
+                    "Mantenimiento Programado": "Mantenimiento",
+                    "Vandalismo o Hurto": "Vandalismo",
+                    "Condiciones Climáticas": "Clima",
+                    "No Especificado": "N/E"
+                }
+                df_caus['Causa_Corta'] = df_caus[COL_CAUSA].map(lambda x: causas_cortas.get(x, str(x).split()[0]))
+                
+                fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.5,
                                 title="🔍 <b>Causas Principales de las Fallas Registradas</b>", template="plotly_dark")
                 fig_rca.update_traces(textposition='inside', textinfo='percent+label', marker=dict(line=dict(color='#000000', width=1)))
                 fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
