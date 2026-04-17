@@ -269,13 +269,13 @@ try:
     df_total.columns = [c.lower() for c in df_total.columns]
 
     # Convertir fecha_inicio a datetime para filtros por mes
-   df_total['fecha_convertida'] = pd.to_datetime(
-    df_total['fecha_inicio'].astype(str)
-        .str.replace('-', '/', regex=False)
-        .str.replace('.', '/', regex=False),
-    dayfirst=True,
-    errors='coerce'
-)
+        df_total['fecha_convertida'] = pd.to_datetime(
+        df_total['fecha_inicio'].astype(str)
+            .str.replace('-', '/', regex=False)
+            .str.replace('.', '/', regex=False),
+        dayfirst=True,
+        errors='coerce'
+    )
     df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(
         lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None
     )
