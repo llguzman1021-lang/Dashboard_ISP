@@ -33,13 +33,24 @@ def load_data():
         with engine.connect() as conn:
             conn.execute(text("ROLLBACK"))   # limpia cualquier tx colgada
             df = pd.read_sql(text(query), conn)
-        return df
     except Exception:
         # Si falla, invalida el engine cacheado y reintenta con conexión fresca
         engine.dispose()
         with engine.connect() as conn:
             df = pd.read_sql(text(query), conn)
-        return df
+
+    # --- NORMALIZACIÓN DE FECHAS Y HORAS (soluciona el error y muestra abril) ---
+    if "fecha_inicio" in df.columns:
+        df["fecha_inicio"] = pd.to_datetime(df["fecha_inicio"], errors="coerce").dt.date
+    if "fecha_fin" in df.columns:
+        df["fecha_fin"] = pd.to_datetime(df["fecha_fin"], errors="coerce").dt.date
+    if "hora_inicio" in df.columns:
+        df["hora_inicio"] = pd.to_datetime(df["hora_inicio"], errors="coerce").dt.time
+    if "hora_fin" in df.columns:
+        df["hora_fin"] = pd.to_datetime(df["hora_fin"], errors="coerce").dt.time
+
+    return df
+
 
 # --- MOTOR DE CÁLCULOS KPI's ESTRATÉGICOS ---
 def calcular_metricas(df_kpi, horas_mes_total):
