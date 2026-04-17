@@ -18,8 +18,8 @@ st.set_page_config(
 def get_engine():
     return create_engine(
         st.secrets["neon_dsn"],
-        pool_pre_ping=True,          # verifica conexión antes de usarla
-        pool_recycle=300,            # recicla conexiones cada 5 min
+        pool_pre_ping=True,
+        pool_recycle=300,
         connect_args={"connect_timeout": 10}
     )
 
@@ -31,11 +31,10 @@ def load_data():
     query = "SELECT * FROM incidents ORDER BY id ASC"
     try:
         with engine.connect() as conn:
-            conn.execute(text("ROLLBACK"))   # limpia cualquier tx colgada
+            conn.execute(text("ROLLBACK"))
             df = pd.read_sql(text(query), conn)
         return df
     except Exception:
-        # Si falla, invalida el engine cacheado y reintenta con conexión fresca
         engine.dispose()
         with engine.connect() as conn:
             df = pd.read_sql(text(query), conn)
@@ -113,6 +112,22 @@ st.markdown("""
         font-weight: 700 !important;
     }
     .stAlert, .stMarkdown { border-radius: 8px; }
+
+    /* Botón de eliminar en rojo */
+    div[data-testid="stButton-delete"] > button:first-child {
+        background-color: #c0392b !important;
+    }
+    div[data-testid="stButton-delete"] > button:first-child:hover {
+        background-color: #a93226 !important;
+    }
+
+    /* Botón de guardar en verde */
+    div[data-testid="stButton-save"] > button:first-child {
+        background-color: #27ae60 !important;
+    }
+    div[data-testid="stButton-save"] > button:first-child:hover {
+        background-color: #1e8449 !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -122,7 +137,7 @@ meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
 # --- SIDEBAR: GESTIÓN OPERATIVA ---
 with st.sidebar:
     st.title("🏢 Centro de Operaciones de Red (NOC)")
-    st.caption("Panel de Control Gerencial Multinet | v3.3")
+    st.caption("Panel de Control Gerencial Multinet | v3.4")
 
     mes_actual_num = datetime.now().month
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=mes_actual_num - 1)
@@ -265,16 +280,11 @@ try:
         st.info("No hay datos en la base de datos todavía.")
         st.stop()
 
-    # Normalizar nombres de columnas a minúsculas por seguridad
     df_total.columns = [c.lower() for c in df_total.columns]
-
-    # Convertir fecha_inicio a datetime para filtros por mes
     df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], errors='coerce')
     df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(
         lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None
     )
-
-    # Asegurar tipos numéricos
     df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
     df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
 
@@ -293,7 +303,6 @@ try:
         downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, horas_totales_mes)
         dias_totales = downtime_total / 24.0
 
-        # --- COMPARATIVAS CON MES ANTERIOR (DELTAS) ---
         delta_m, delta_a, delta_s, delta_dias = None, None, None, None
 
         if mes_index > 1:
@@ -431,36 +440,34 @@ try:
         fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
         st.plotly_chart(fig_trend, use_container_width=True)
 
-        # --- BITÁCORA INTELIGENTE PROTEGIDA ---
+        # ============================================================
+        # --- BITÁCORA Y PANEL DE AUDITORÍA MEJORADO ---
+        # ============================================================
         st.divider()
-        st.subheader("🔐 Panel de Auditoría y Mantenimiento de Datos")
+        st.subheader("🗂️ Bitácora de Incidencias del Mes")
 
-        col_a1, col_a2 = st.columns([3, 2])
-        busqueda = col_a1.text_input("🔎 Búsqueda de Registros:",
-                                     placeholder="Escriba aquí para ubicar detalles técnicos o zonas geográficas...")
-        pin_seguridad = col_a2.text_input("🔑 Ingreso de PIN Restringido:", type="password",
-                                          placeholder="Credencial de Administrador (Necesario para Editar o Eliminar)")
+        # Barra de búsqueda — separada del PIN
+        busqueda = st.text_input(
+            "🔎 Búsqueda de Registros:",
+            placeholder="Escriba aquí para ubicar detalles técnicos o zonas geográficas..."
+        )
 
-        acceso_autorizado = (pin_seguridad == "1010")
+        cols_to_drop = [c for c in ['fecha_convertida', 'mes_nombre'] if c in df_filtrado.columns]
+        conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Falta Hora Cierre)",
+                           "Parcial (Falta Hora Inicio)", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
+        servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
 
         df_display = df_filtrado.copy()
-
         if busqueda:
             mask = df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
             df_display = df_display[mask]
 
         df_display.insert(0, "Seleccionar", False)
 
-        conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Falta Hora Cierre)",
-                           "Parcial (Falta Hora Inicio)", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
-        servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
-
-        cols_to_drop = [c for c in ['fecha_convertida', 'mes_nombre'] if c in df_display.columns]
-
         edited_df = st.data_editor(
             df_display.drop(columns=cols_to_drop),
             column_config={
-                "Seleccionar": st.column_config.CheckboxColumn("Sel", default=False),
+                "Seleccionar": st.column_config.CheckboxColumn("✔ Sel.", default=False),
                 "id": None,
                 "worksheet_name": None,
                 "gsheet_id": None,
@@ -480,93 +487,155 @@ try:
         original_data = df_display.drop(columns=cols_to_drop + ['Seleccionar'])
         edited_data = edited_df.drop(columns=['Seleccionar'])
         hay_cambios = not original_data.reset_index(drop=True).equals(edited_data.reset_index(drop=True))
+        hay_seleccion = not filas_para_eliminar.empty
 
-        if not filas_para_eliminar.empty or hay_cambios:
+        # ---- Panel de acciones: solo aparece si hay algo que hacer ----
+        if hay_seleccion or hay_cambios:
+            st.divider()
+            st.subheader("🔐 Panel de Acciones Protegidas")
+
+            # Resumen de lo que está a punto de ejecutarse
+            if hay_seleccion and hay_cambios:
+                st.warning(
+                    f"⚠️ **Atención:** Ha marcado **{len(filas_para_eliminar)} registro(s)** para eliminación "
+                    f"**y** ha modificado campos en la tabla. "
+                    f"Ambas acciones son irreversibles. Autorice con su PIN de administrador para proceder.",
+                    icon="⚠️"
+                )
+            elif hay_seleccion:
+                zonas_afectadas = ", ".join(filas_para_eliminar['zona'].astype(str).unique().tolist())
+                st.error(
+                    f"🗑️ **Eliminación permanente solicitada:** Se borrarán definitivamente "
+                    f"**{len(filas_para_eliminar)} registro(s)** correspondientes a las zonas: **{zonas_afectadas}**. "
+                    f"Esta acción **no se puede deshacer**. Ingrese su PIN para confirmar.",
+                    icon="🚨"
+                )
+            elif hay_cambios:
+                st.info(
+                    "✏️ **Modificaciones pendientes:** Ha realizado cambios en uno o más registros de la tabla. "
+                    "Las métricas se recalcularán automáticamente al guardar. "
+                    "Ingrese su PIN de administrador para aplicar los cambios.",
+                    icon="ℹ️"
+                )
+
+            # Campo de PIN — solo aparece cuando hay acción pendiente
+            col_pin, col_spacer = st.columns([1, 2])
+            with col_pin:
+                pin_ingresado = st.text_input(
+                    "🔑 PIN de Administrador:",
+                    type="password",
+                    placeholder="Ingrese su credencial de acceso",
+                    key="pin_acceso"
+                )
+
+            acceso_autorizado = (pin_ingresado == "1010")
+
+            if pin_ingresado and not acceso_autorizado:
+                st.error("🛑 PIN incorrecto. Acceso denegado.")
+
             if acceso_autorizado:
-                if not filas_para_eliminar.empty:
-                    if st.button(f"🗑️ Eliminar Definitivamente ({len(filas_para_eliminar)}) Registros Seleccionados"):
-                        ids_eliminar = filas_para_eliminar['id'].tolist()
-                        try:
-                            with engine.begin() as conn:
-                                for rid in ids_eliminar:
-                                    conn.execute(text("DELETE FROM incidents WHERE id = :id"), {"id": rid})
-                            st.success("✅ Los registros han sido destruidos de forma segura.")
-                            time.sleep(1)
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al eliminar: {e}")
+                st.success("✅ Acceso autorizado. Seleccione la acción a ejecutar.")
 
+                col_btn1, col_btn2, col_espacio = st.columns([1, 1, 2])
+
+                # --- BOTÓN ELIMINAR ---
+                if hay_seleccion:
+                    with col_btn1:
+                        if st.button(
+                            f"🗑️ Confirmar Eliminación ({len(filas_para_eliminar)} registro(s))",
+                            key="btn_eliminar",
+                            type="primary"
+                        ):
+                            ids_eliminar = [int(rid) for rid in filas_para_eliminar['id'].tolist()]
+                            try:
+                                with engine.begin() as conn:
+                                    for rid in ids_eliminar:
+                                        conn.execute(
+                                            text("DELETE FROM incidents WHERE id = :id"),
+                                            {"id": rid}
+                                        )
+                                st.success(f"✅ {len(ids_eliminar)} registro(s) eliminado(s) de forma definitiva.")
+                                time.sleep(1)
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al eliminar: {e}")
+
+                # --- BOTÓN GUARDAR CAMBIOS ---
                 if hay_cambios:
-                    if st.button("💾 Guardar Modificaciones y Recalcular Métricas Automáticamente"):
-                        try:
-                            with engine.begin() as conn:
-                                for i in range(len(original_data)):
-                                    orig_row = original_data.iloc[i]
-                                    edit_row = edited_data.iloc[i]
-                                    if not orig_row.equals(edit_row):
-                                        f_i_s = str(edit_row.get('fecha_inicio', ''))
-                                        h_i_s = str(edit_row.get('hora_inicio', ''))
-                                        f_f_s = str(edit_row.get('fecha_fin', ''))
-                                        h_f_s = str(edit_row.get('hora_fin', ''))
-                                        conoce_s = str(edit_row.get('conocimiento_tiempos', ''))
+                    with col_btn2:
+                        if st.button(
+                            "💾 Guardar Modificaciones",
+                            key="btn_guardar",
+                            type="primary"
+                        ):
+                            try:
+                                with engine.begin() as conn:
+                                    for i in range(len(original_data)):
+                                        orig_row = original_data.iloc[i]
+                                        edit_row = edited_data.iloc[i]
+                                        if not orig_row.equals(edit_row):
+                                            f_i_s = str(edit_row.get('fecha_inicio', ''))
+                                            h_i_s = str(edit_row.get('hora_inicio', ''))
+                                            f_f_s = str(edit_row.get('fecha_fin', ''))
+                                            h_f_s = str(edit_row.get('hora_fin', ''))
+                                            conoce_s = str(edit_row.get('conocimiento_tiempos', ''))
 
-                                        dur_r = 0.0
-                                        try:
-                                            if conoce_s == "Total" and h_i_s not in ["None", "N/A", "NaT", ""] and h_f_s not in ["None", "N/A", "NaT", ""]:
-                                                dt_ini = datetime.strptime(f"{f_i_s} {h_i_s}", "%Y-%m-%d %H:%M:%S")
-                                                dt_fin = datetime.strptime(f"{f_f_s} {h_f_s}", "%Y-%m-%d %H:%M:%S")
-                                                dur_r = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
-                                                if dur_r < 0: dur_r = 0.0
-                                        except:
                                             dur_r = 0.0
+                                            try:
+                                                if conoce_s == "Total" and h_i_s not in ["None", "N/A", "NaT", ""] and h_f_s not in ["None", "N/A", "NaT", ""]:
+                                                    dt_ini = datetime.strptime(f"{f_i_s} {h_i_s}", "%Y-%m-%d %H:%M:%S")
+                                                    dt_fin = datetime.strptime(f"{f_f_s} {h_f_s}", "%Y-%m-%d %H:%M:%S")
+                                                    dur_r = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
+                                                    if dur_r < 0:
+                                                        dur_r = 0.0
+                                            except:
+                                                dur_r = 0.0
 
-                                        row_id = edit_row.get('id') or orig_row.get('id')
-                                        
-                                        # Parsear Nulos para SQL
-                                        sql_hi = None if h_i_s in ["None", "N/A", "NaT", ""] else h_i_s
-                                        sql_hf = None if h_f_s in ["None", "N/A", "NaT", ""] else h_f_s
+                                            # ✅ FIX: Convertir id a int nativo de Python para evitar error numpy.int64
+                                            row_id = int(edit_row.get('id') if edit_row.get('id') is not None else orig_row.get('id'))
 
-                                        conn.execute(text("""
-                                            UPDATE incidents SET
-                                                zona = :zona,
-                                                servicio = :servicio,
-                                                categoria = :categoria,
-                                                equipo_afectado = :equipo,
-                                                fecha_inicio = :fecha_inicio,
-                                                hora_inicio = :hora_inicio,
-                                                fecha_fin = :fecha_fin,
-                                                hora_fin = :hora_fin,
-                                                clientes_afectados = :clientes,
-                                                causa_raiz = :causa,
-                                                descripcion = :descripcion,
-                                                duracion_horas = :duracion,
-                                                conocimiento_tiempos = :conocimiento
-                                            WHERE id = :id
-                                        """), {
-                                            "zona": edit_row.get('zona', ''),
-                                            "servicio": edit_row.get('servicio', ''),
-                                            "categoria": edit_row.get('categoria', ''),
-                                            "equipo": edit_row.get('equipo_afectado', ''),
-                                            "fecha_inicio": f_i_s,
-                                            "hora_inicio": sql_hi,
-                                            "fecha_fin": f_f_s,
-                                            "hora_fin": sql_hf,
-                                            "clientes": int(edit_row.get('clientes_afectados', 0)),
-                                            "causa": edit_row.get('causa_raiz', ''),
-                                            "descripcion": edit_row.get('descripcion', ''),
-                                            "duracion": dur_r,
-                                            "conocimiento": conoce_s,
-                                            "id": row_id
-                                        })
-                            st.success("✅ Modificaciones integradas exitosamente en la base de datos principal.")
-                            time.sleep(1)
-                            st.cache_data.clear()
-                            st.rerun()
-                        except Exception as e:
-                            st.error(f"Error al guardar modificaciones: {e}")
-            else:
-                st.error("🛑 Operación Restringida: Ingrese el PIN de credencial de administrador para validar estas acciones.")
+                                            sql_hi = None if h_i_s in ["None", "N/A", "NaT", ""] else h_i_s
+                                            sql_hf = None if h_f_s in ["None", "N/A", "NaT", ""] else h_f_s
+
+                                            conn.execute(text("""
+                                                UPDATE incidents SET
+                                                    zona = :zona,
+                                                    servicio = :servicio,
+                                                    categoria = :categoria,
+                                                    equipo_afectado = :equipo,
+                                                    fecha_inicio = :fecha_inicio,
+                                                    hora_inicio = :hora_inicio,
+                                                    fecha_fin = :fecha_fin,
+                                                    hora_fin = :hora_fin,
+                                                    clientes_afectados = :clientes,
+                                                    causa_raiz = :causa,
+                                                    descripcion = :descripcion,
+                                                    duracion_horas = :duracion,
+                                                    conocimiento_tiempos = :conocimiento
+                                                WHERE id = :id
+                                            """), {
+                                                "zona": str(edit_row.get('zona', '')),
+                                                "servicio": str(edit_row.get('servicio', '')),
+                                                "categoria": str(edit_row.get('categoria', '')),
+                                                "equipo": str(edit_row.get('equipo_afectado', '')),
+                                                "fecha_inicio": f_i_s,
+                                                "hora_inicio": sql_hi,
+                                                "fecha_fin": f_f_s,
+                                                "hora_fin": sql_hf,
+                                                "clientes": int(edit_row.get('clientes_afectados', 0)),
+                                                "causa": str(edit_row.get('causa_raiz', '')),
+                                                "descripcion": str(edit_row.get('descripcion', '')),
+                                                "duracion": float(dur_r),
+                                                "conocimiento": conoce_s,
+                                                "id": row_id
+                                            })
+                                st.success("✅ Modificaciones integradas exitosamente. Las métricas se han recalculado.")
+                                time.sleep(1)
+                                st.cache_data.clear()
+                                st.rerun()
+                            except Exception as e:
+                                st.error(f"Error al guardar modificaciones: {e}")
 
         # --- Exportación Final ---
         st.write("---")
