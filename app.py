@@ -128,6 +128,14 @@ st.markdown("""
     div[data-testid="stButton-save"] > button:first-child:hover {
         background-color: #1e8449 !important;
     }
+    
+    /* Corrección de contraste global para la selección en la tabla (Data Editor) */
+    :root {
+        --primary-color: #0068c9;
+    }
+    [data-testid="stDataFrame"] {
+        --text-color: #ffffff !important;
+    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -340,6 +348,10 @@ try:
 
         st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base para no alterar los promedios.")
 
+        # --- ESTILOS COMPARTIDOS DE ALTO CONTRASTE PARA GRAFICAS ---
+        # Garantiza que el cuadro flotante siempre sea gris muy oscuro con letras blancas
+        hover_style = dict(bgcolor="#1c1c1c", font_size=14, font_color="#ffffff", bordercolor="#4a4a4a")
+
         # --- GRÁFICAS ---
         st.divider()
         st.subheader("📈 Análisis Visual del Rendimiento Operativo")
@@ -347,22 +359,14 @@ try:
         col_g1, col_g2 = st.columns(2)
 
         causas_cortas = {
-            "Corte de Fibra por Terceros": "Terceros",
-            "Corte de Fibra (No Especificado)": "Fibra",
-            "Caída de Árboles sobre Fibra": "Árboles",
-            "Falla de Energía Comercial": "Energía",
-            "Corrosión en Equipos": "Corrosión",
-            "Daños por Fauna": "Fauna",
-            "Falla de Hardware": "Hardware",
-            "Falla de Configuración": "Configuración",
-            "Falla de Redundancia": "Redundancia",
-            "Saturación de Tráfico": "Saturación",
-            "Saturación en Servidor UNIFI": "Sat. UNIFI",
-            "Falla de Inicio en UNIFI": "Inic. UNIFI",
-            "Mantenimiento Programado": "Mantenimiento",
-            "Vandalismo o Hurto": "Vandalismo",
-            "Condiciones Climáticas": "Clima",
-            "No Especificado": "N/E"
+            "Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra",
+            "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía",
+            "Corrosión en Equipos": "Corrosión", "Daños por Fauna": "Fauna",
+            "Falla de Hardware": "Hardware", "Falla de Configuración": "Configuración",
+            "Falla de Redundancia": "Redundancia", "Saturación de Tráfico": "Saturación",
+            "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI",
+            "Mantenimiento Programado": "Mantenimiento", "Vandalismo o Hurto": "Vandalismo",
+            "Condiciones Climáticas": "Clima", "No Especificado": "N/E"
         }
 
         df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
@@ -372,16 +376,17 @@ try:
                          title="🔍 <b>Causas Principales de las Fallas Registradas</b>", template="plotly_dark")
         fig_rca.update_traces(textposition='inside', textinfo='percent+label',
                               marker=dict(line=dict(color='#000000', width=1)))
-        fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
-        col_g1.plotly_chart(fig_rca, use_container_width=True)
+        fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0), hoverlabel=hover_style)
+        # Fix: agregamos theme=None para evitar que Streamlit arruine los colores de Plotly
+        col_g1.plotly_chart(fig_rca, use_container_width=True, theme=None)
 
         df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
         fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', color='Fallos',
                         title="🛠️ <b>Fallas Acumuladas por Tipo de Equipamiento</b>", template="plotly_dark",
                         color_continuous_scale="Reds")
         fig_eq.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=60, b=0),
-                             xaxis_title="Cantidad de Eventos (Fallas)", yaxis_title="")
-        col_g2.plotly_chart(fig_eq, use_container_width=True)
+                             xaxis_title="Cantidad de Eventos (Fallas)", yaxis_title="", hoverlabel=hover_style)
+        col_g2.plotly_chart(fig_eq, use_container_width=True, theme=None)
 
         st.write("")
         col_g3, col_g4 = st.columns(2)
@@ -392,9 +397,9 @@ try:
                               text_auto=True, template="plotly_dark", color='servicio',
                               color_discrete_sequence=['#0068c9', '#ff9f43', '#27ae60'])
         fig_serv_kpi.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0),
-                                   xaxis_title="Total de Caídas Registradas", yaxis_title="")
+                                   xaxis_title="Total de Caídas Registradas", yaxis_title="", hoverlabel=hover_style)
         fig_serv_kpi.update_traces(textposition='inside', textfont_size=14, marker_line_width=0)
-        col_g3.plotly_chart(fig_serv_kpi, use_container_width=True)
+        col_g3.plotly_chart(fig_serv_kpi, use_container_width=True, theme=None)
 
         top_zonas = df_filtrado.groupby('zona')['duracion_horas'].sum().nlargest(5).reset_index()
         top_zonas.columns = ['Zona', 'Horas Offline']
@@ -405,9 +410,9 @@ try:
                                color_continuous_scale='Blues')
         fig_bar_zonas.update_layout(coloraxis_showscale=False, yaxis={'categoryorder': 'total ascending'},
                                     margin=dict(l=0, r=0, t=60, b=0),
-                                    xaxis_title="Total de Horas sin Servicio", yaxis_title="")
+                                    xaxis_title="Total de Horas sin Servicio", yaxis_title="", hoverlabel=hover_style)
         fig_bar_zonas.update_traces(marker_line_width=0, textfont_size=13, textposition='inside')
-        col_g4.plotly_chart(fig_bar_zonas, use_container_width=True)
+        col_g4.plotly_chart(fig_bar_zonas, use_container_width=True, theme=None)
 
         # Matriz de Riesgo
         st.write("---")
@@ -426,8 +431,8 @@ try:
                                 labels={'Frecuencia': 'Cantidad de Fallas Registradas',
                                         'Horas_Down': 'Horas Totales Caídas (Acumulado)'},
                                 template="plotly_dark")
-            fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True)
-            st.plotly_chart(fig_sc, use_container_width=True)
+            fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True, hoverlabel=hover_style)
+            st.plotly_chart(fig_sc, use_container_width=True, theme=None)
 
         # Tendencia Diaria
         st.write("")
@@ -438,7 +443,8 @@ try:
                             labels={'fecha_convertida': 'Fechas del Mes', 'Total_Eventos': 'Cantidad Total de Fallas'},
                             template="plotly_dark")
         fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
-        st.plotly_chart(fig_trend, use_container_width=True)
+        fig_trend.update_layout(hoverlabel=hover_style)
+        st.plotly_chart(fig_trend, use_container_width=True, theme=None)
 
         # ============================================================
         # --- BITÁCORA Y PANEL DE AUDITORÍA MEJORADO ---
