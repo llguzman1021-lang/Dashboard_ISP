@@ -134,7 +134,7 @@ except Exception as e:
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption("Panel de Control Multinet | Enterprise v6.1")
+    st.caption("Panel de Control Multinet | Enterprise v6.2")
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis", meses_nombres, index=datetime.now().month - 1)
     
     # Extraemos el dataframe del mes aquí para poder usar las métricas en la barra lateral
@@ -202,10 +202,10 @@ with tab1:
         k1, k2, k3 = st.columns(3)
         k1.metric("MTTR", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse", 
                   help="Tiempo Promedio de Resolución: Promedio de horas empleadas para reparar el servicio tras la notificación de la falla.")
-        k2.metric("Disponibilidad", f"{sla_porcentaje:.2f}%", delta=delta_s, 
+        k2.metric("Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, 
                   help="Nivel integral de servicio operativo (SLA) basado en las horas del mes.")
-        k3.metric("ACD", f"{acd_horas:.2f} horas", delta=delta_a, delta_color="inverse", 
-                  help="Promedio de Afectación por Cliente: Promedio estadístico de horas continuas en las que un cliente experimentó interrupción de servicio.")
+        k3.metric("Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas", delta=delta_a, delta_color="inverse", 
+                  help="Promedio de Afectación por Cliente (ACD): Promedio estadístico de horas continuas en las que un cliente experimentó interrupción de servicio.")
         
         st.write("") # Espaciador
         
@@ -215,7 +215,7 @@ with tab1:
                   help="La duración en horas del incidente más severo y prolongado registrado en este periodo mensual.")
         k5.metric("Afectados", f"{cl_imp} clientes", 
                   help="Cantidad consolidada de usuarios que experimentaron cortes de servicio.")
-        k6.metric("Impacto Acum.", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse", 
+        k6.metric("Impacto Acumulado", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse", 
                   help="Sumatoria global del tiempo de desconexión expresado en la equivalencia de días enteros.")
 
         st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base para no alterar los promedios.")
