@@ -1,3 +1,3 @@
-git add migrate.py
-git commit -m "Add migration script"
-git push
+export NEON_DSN="postgres://..."
+export GSHEET_CRED_JSON='{"type":"service_account", ...}'
+python migrate.py
