@@ -6,14 +6,14 @@ from datetime import datetime
 import calendar
 import time
 
----------------- CONFIGURACIÓN GENERAL ----------------
+#---------------- CONFIGURACIÓN GENERAL ----------------
 st.set_page_config(
 page_title="Multinet NOC Analytics | Enterprise Operations",
 layout="wide",
 page_icon="🌐"
 )
 
----------------- CONEXIÓN A NEON ----------------
+#---------------- CONEXIÓN A NEON ----------------
 @st.cache_resource
 def get_engine():
 return create_engine(
@@ -25,7 +25,7 @@ connect_args={"connect_timeout": 10}
 
 engine = get_engine()
 
----------------- CARGA DE DATOS ----------------
+#---------------- CARGA DE DATOS ----------------
 @st.cache_data(ttl=300)
 def load_data():
 query = "SELECT * FROM incidents ORDER BY id ASC"
@@ -45,7 +45,7 @@ df["hora_fin"] = df["hora_fin"].astype(str)
 
 return df
 
----------------- FUNCIÓN DE MÉTRICAS ----------------
+#---------------- FUNCIÓN DE MÉTRICAS ----------------
 def calcular_metricas(df_kpi, horas_mes_total):
 if df_kpi.empty:
 return 0.0, 0.0, 100.0, 0.0, 0, 0.0
@@ -87,7 +87,7 @@ max_downt = df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0
 
 return downtime_bruto, acd, sla_resultante, mttr, clientes, max_downt
 
----------------- ESTILOS ----------------
+#---------------- ESTILOS ----------------
 st.markdown("""
 <style>
 div.stButton > button:first-child {
@@ -118,7 +118,7 @@ font-weight: 700 !important;
 meses_nombres = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
 "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
----------------- SIDEBAR: FORMULARIO ----------------
+#---------------- SIDEBAR: FORMULARIO ----------------
 with st.sidebar:
 st.title("🏢 Centro de Operaciones de Red (NOC)")
 st.caption("Panel de Control Gerencial Multinet | v3.3")
@@ -243,7 +243,7 @@ st.rerun()
 except Exception as e:
 st.error(f"Error al guardar: {e}")
 
----------------- PROCESAMIENTO PRINCIPAL ----------------
+#---------------- PROCESAMIENTO PRINCIPAL ----------------
 try:
 df_total = load_data()
 
