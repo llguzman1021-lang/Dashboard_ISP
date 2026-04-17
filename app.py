@@ -26,7 +26,7 @@ def get_engine():
 engine = get_engine()
 
 # --- CARGA DE DATOS DESDE NEON ---
-@st.cache_data(ttl=300)
+@st.cache_data(ttl=60)  # TTL reducido a 60s para ver datos nuevos más rápido
 def load_data():
     query = "SELECT * FROM incidents ORDER BY id ASC"
     try:
@@ -40,6 +40,26 @@ def load_data():
         with engine.connect() as conn:
             df = pd.read_sql(text(query), conn)
         return df
+
+def parse_fecha_robusta(fecha_str):
+    """Intenta parsear una fecha en múltiples formatos comunes."""
+    if pd.isna(fecha_str) or str(fecha_str).strip() in ('', 'N/A', 'nan'):
+        return pd.NaT
+    s = str(fecha_str).strip()
+    formatos = [
+        "%d/%m/%Y",   # 03/04/2026  ← formato principal
+        "%Y-%m-%d",   # 2026-04-03  ← formato ISO
+        "%d-%m-%Y",   # 03-04-2026
+        "%m/%d/%Y",   # 04/03/2026  ← formato USA
+        "%Y/%m/%d",   # 2026/04/03
+        "%d/%m/%y",   # 03/04/26
+    ]
+    for fmt in formatos:
+        try:
+            return datetime.strptime(s, fmt)
+        except ValueError:
+            continue
+    return pd.NaT
 
 # --- MOTOR DE CÁLCULOS KPI's ESTRATÉGICOS ---
 def calcular_metricas(df_kpi, horas_mes_total):
@@ -268,15 +288,33 @@ try:
     # Normalizar nombres de columnas a minúsculas por seguridad
     df_total.columns = [c.lower() for c in df_total.columns]
 
-    # Convertir fecha_inicio a datetime para filtros por mes
-    df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], dayfirst=True, errors='coerce')
+    # Convertir fecha_inicio a datetime usando parser robusto multi-formato
+    df_total['fecha_convertida'] = df_total['fecha_inicio'].apply(parse_fecha_robusta)
     df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(
         lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None
     )
+    df_total['anio'] = df_total['fecha_convertida'].dt.year
 
     # Asegurar tipos numéricos
     df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
     df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+
+    # --- PANEL DE DIAGNÓSTICO (visible solo si hay fechas sin parsear) ---
+    fechas_sin_parsear = df_total[df_total['fecha_convertida'].isna()]
+    if not fechas_sin_parsear.empty:
+        with st.expander(f"⚠️ Diagnóstico: {len(fechas_sin_parsear)} registros con fecha no reconocida", expanded=True):
+            st.warning("Los siguientes registros tienen un formato de fecha que el sistema no pudo interpretar. Verifique el campo `fecha_inicio`:")
+            st.dataframe(fechas_sin_parsear[['id', 'fecha_inicio', 'worksheet_name']].head(20), use_container_width=True)
+
+    meses_detectados = df_total['mes_nombre'].dropna().unique().tolist()
+    with st.sidebar:
+        with st.expander("🔍 Debug: Meses detectados en BD"):
+            st.write(f"**Total registros:** {len(df_total)}")
+            st.write(f"**Meses con datos:** {sorted(meses_detectados)}")
+            st.write(f"**Registros sin fecha válida:** {len(fechas_sin_parsear)}")
+            if not df_total.empty:
+                st.write("**Muestra de fechas (primeros 5):**")
+                st.write(df_total[['id','fecha_inicio','fecha_convertida','mes_nombre']].head(5))
 
     df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy()
 
