@@ -112,30 +112,6 @@ st.markdown("""
         font-weight: 700 !important;
     }
     .stAlert, .stMarkdown { border-radius: 8px; }
-
-    /* Botón de eliminar en rojo */
-    div[data-testid="stButton-delete"] > button:first-child {
-        background-color: #c0392b !important;
-    }
-    div[data-testid="stButton-delete"] > button:first-child:hover {
-        background-color: #a93226 !important;
-    }
-
-    /* Botón de guardar en verde */
-    div[data-testid="stButton-save"] > button:first-child {
-        background-color: #27ae60 !important;
-    }
-    div[data-testid="stButton-save"] > button:first-child:hover {
-        background-color: #1e8449 !important;
-    }
-    
-    /* Corrección de contraste global para la selección en la tabla (Data Editor) */
-    :root {
-        --primary-color: #0068c9;
-    }
-    [data-testid="stDataFrame"] {
-        --text-color: #ffffff !important;
-    }
     </style>
     """, unsafe_allow_html=True)
 
@@ -145,7 +121,7 @@ meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio",
 # --- SIDEBAR: GESTIÓN OPERATIVA ---
 with st.sidebar:
     st.title("🏢 Centro de Operaciones de Red (NOC)")
-    st.caption("Panel de Control Gerencial Multinet | v3.4")
+    st.caption("Panel de Control Gerencial Multinet | v3.5")
 
     mes_actual_num = datetime.now().month
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=mes_actual_num - 1)
@@ -348,10 +324,6 @@ try:
 
         st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base para no alterar los promedios.")
 
-        # --- ESTILOS COMPARTIDOS DE ALTO CONTRASTE PARA GRAFICAS ---
-        # Garantiza que el cuadro flotante siempre sea gris muy oscuro con letras blancas
-        hover_style = dict(bgcolor="#1c1c1c", font_size=14, font_color="#ffffff", bordercolor="#4a4a4a")
-
         # --- GRÁFICAS ---
         st.divider()
         st.subheader("📈 Análisis Visual del Rendimiento Operativo")
@@ -359,34 +331,43 @@ try:
         col_g1, col_g2 = st.columns(2)
 
         causas_cortas = {
-            "Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra",
-            "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía",
-            "Corrosión en Equipos": "Corrosión", "Daños por Fauna": "Fauna",
-            "Falla de Hardware": "Hardware", "Falla de Configuración": "Configuración",
-            "Falla de Redundancia": "Redundancia", "Saturación de Tráfico": "Saturación",
-            "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI",
-            "Mantenimiento Programado": "Mantenimiento", "Vandalismo o Hurto": "Vandalismo",
-            "Condiciones Climáticas": "Clima", "No Especificado": "N/E"
+            "Corte de Fibra por Terceros": "Terceros",
+            "Corte de Fibra (No Especificado)": "Fibra",
+            "Caída de Árboles sobre Fibra": "Árboles",
+            "Falla de Energía Comercial": "Energía",
+            "Corrosión en Equipos": "Corrosión",
+            "Daños por Fauna": "Fauna",
+            "Falla de Hardware": "Hardware",
+            "Falla de Configuración": "Configuración",
+            "Falla de Redundancia": "Redundancia",
+            "Saturación de Tráfico": "Saturación",
+            "Saturación en Servidor UNIFI": "Sat. UNIFI",
+            "Falla de Inicio en UNIFI": "Inic. UNIFI",
+            "Mantenimiento Programado": "Mantenimiento",
+            "Vandalismo o Hurto": "Vandalismo",
+            "Condiciones Climáticas": "Clima",
+            "No Especificado": "N/E"
         }
 
         df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
         df_caus['Causa_Corta'] = df_caus['causa_raiz'].map(lambda x: causas_cortas.get(x, str(x).split()[0]))
 
+        # Revertir gráficas a tema por defecto y asegurar contraste
         fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.5,
-                         title="🔍 <b>Causas Principales de las Fallas Registradas</b>", template="plotly_dark")
-        fig_rca.update_traces(textposition='inside', textinfo='percent+label',
-                              marker=dict(line=dict(color='#000000', width=1)))
-        fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0), hoverlabel=hover_style)
-        # Fix: agregamos theme=None para evitar que Streamlit arruine los colores de Plotly
-        col_g1.plotly_chart(fig_rca, use_container_width=True, theme=None)
+                         title="🔍 <b>Causas Principales de las Fallas Registradas</b>")
+        # Fix pie legibilidad: Etiquetas fuera con fondo contrastado
+        fig_rca.update_traces(textposition='outside', textinfo='percent+label')
+        fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
+        # Revertir tema predeterminado
+        col_g1.plotly_chart(fig_rca, use_container_width=True)
 
         df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
         fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', color='Fallos',
-                        title="🛠️ <b>Fallas Acumuladas por Tipo de Equipamiento</b>", template="plotly_dark",
+                        title="🛠️ <b>Fallas Acumuladas por Tipo de Equipamiento</b>",
                         color_continuous_scale="Reds")
         fig_eq.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=60, b=0),
-                             xaxis_title="Cantidad de Eventos (Fallas)", yaxis_title="", hoverlabel=hover_style)
-        col_g2.plotly_chart(fig_eq, use_container_width=True, theme=None)
+                             xaxis_title="Cantidad de Eventos (Fallas)", yaxis_title="")
+        col_g2.plotly_chart(fig_eq, use_container_width=True)
 
         st.write("")
         col_g3, col_g4 = st.columns(2)
@@ -394,25 +375,25 @@ try:
         df_serv = df_filtrado.groupby('servicio').size().reset_index(name='Total_Eventos')
         fig_serv_kpi = px.bar(df_serv, x='Total_Eventos', y='servicio', orientation='h',
                               title="🌐 <b>Volumen de Incidencias según el Servicio</b>",
-                              text_auto=True, template="plotly_dark", color='servicio',
+                              text_auto=True, color='servicio',
                               color_discrete_sequence=['#0068c9', '#ff9f43', '#27ae60'])
         fig_serv_kpi.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0),
-                                   xaxis_title="Total de Caídas Registradas", yaxis_title="", hoverlabel=hover_style)
-        fig_serv_kpi.update_traces(textposition='inside', textfont_size=14, marker_line_width=0)
-        col_g3.plotly_chart(fig_serv_kpi, use_container_width=True, theme=None)
+                                   xaxis_title="Total de Caídas Registradas", yaxis_title="")
+        fig_serv_kpi.update_traces(textfont_size=14, marker_line_width=0)
+        col_g3.plotly_chart(fig_serv_kpi, use_container_width=True)
 
         top_zonas = df_filtrado.groupby('zona')['duracion_horas'].sum().nlargest(5).reset_index()
         top_zonas.columns = ['Zona', 'Horas Offline']
         top_zonas['Etiqueta'] = top_zonas['Horas Offline'].apply(lambda x: f"{x:.2f} horas")
         fig_bar_zonas = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
                                title="📉 <b>Impacto por Zona (Horas sin Servicio)</b>",
-                               text='Etiqueta', template="plotly_dark", color='Horas Offline',
+                               text='Etiqueta', color='Horas Offline',
                                color_continuous_scale='Blues')
         fig_bar_zonas.update_layout(coloraxis_showscale=False, yaxis={'categoryorder': 'total ascending'},
                                     margin=dict(l=0, r=0, t=60, b=0),
-                                    xaxis_title="Total de Horas sin Servicio", yaxis_title="", hoverlabel=hover_style)
-        fig_bar_zonas.update_traces(marker_line_width=0, textfont_size=13, textposition='inside')
-        col_g4.plotly_chart(fig_bar_zonas, use_container_width=True, theme=None)
+                                    xaxis_title="Total de Horas sin Servicio", yaxis_title="")
+        fig_bar_zonas.update_traces(marker_line_width=0, textfont_size=13)
+        col_g4.plotly_chart(fig_bar_zonas, use_container_width=True)
 
         # Matriz de Riesgo
         st.write("---")
@@ -429,10 +410,9 @@ try:
                                       "Nodos hacia la derecha sufren fallas recurrentes. "
                                       "El radio del círculo representa el volumen de clientes afectados.</sup>",
                                 labels={'Frecuencia': 'Cantidad de Fallas Registradas',
-                                        'Horas_Down': 'Horas Totales Caídas (Acumulado)'},
-                                template="plotly_dark")
-            fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True, hoverlabel=hover_style)
-            st.plotly_chart(fig_sc, use_container_width=True, theme=None)
+                                        'Horas_Down': 'Horas Totales Caídas (Acumulado)'})
+            fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True)
+            st.plotly_chart(fig_sc, use_container_width=True)
 
         # Tendencia Diaria
         st.write("")
@@ -440,14 +420,12 @@ try:
         fig_trend = px.area(df_trend, x='fecha_convertida', y='Total_Eventos',
                             title="📅 <b>Tendencia Diaria de Cortes Operativos</b><br>"
                                   "<sup>Muestra la fluctuación y volumen de las incidencias registradas día a día durante este ciclo.</sup>",
-                            labels={'fecha_convertida': 'Fechas del Mes', 'Total_Eventos': 'Cantidad Total de Fallas'},
-                            template="plotly_dark")
+                            labels={'fecha_convertida': 'Fechas del Mes', 'Total_Eventos': 'Cantidad Total de Fallas'})
         fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
-        fig_trend.update_layout(hoverlabel=hover_style)
-        st.plotly_chart(fig_trend, use_container_width=True, theme=None)
+        st.plotly_chart(fig_trend, use_container_width=True)
 
         # ============================================================
-        # --- BITÁCORA Y PANEL DE AUDITORÍA MEJORADO ---
+        # --- BITÁCORA Y PANEL DE AUDITORÍA REFORMADO VIZ ---
         # ============================================================
         st.divider()
         st.subheader("🗂️ Bitácora de Incidencias del Mes")
@@ -470,6 +448,7 @@ try:
 
         df_display.insert(0, "Seleccionar", False)
 
+        # Revertir a Data Editor predeterminado para legibilidad de texto
         edited_df = st.data_editor(
             df_display.drop(columns=cols_to_drop),
             column_config={
@@ -495,14 +474,15 @@ try:
         hay_cambios = not original_data.reset_index(drop=True).equals(edited_data.reset_index(drop=True))
         hay_seleccion = not filas_para_eliminar.empty
 
-        # ---- Panel de acciones: solo aparece si hay algo que hacer ----
+        # ---- Panel de acciones reformado: solo aparece si hay algo que hacer ----
         if hay_seleccion or hay_cambios:
             st.divider()
             st.markdown("### 🔐 Validar y Ejecutar Cambios")
 
-            # Usamos un contenedor visual para agrupar y profesionalizar la sección
+            # Contenedor visual limpio
             with st.container(border=True):
-                col_info, col_auth = st.columns([3, 2])
+                # Usar columnas para info y PIN separando interfaz
+                col_auth, col_info = st.columns([2, 3])
 
                 with col_info:
                     st.markdown("#### Resumen de Acciones Solicitadas")
@@ -527,6 +507,7 @@ try:
                             icon="ℹ️"
                         )
 
+                # PIN de validación en columna izquierda para orden visual
                 with col_auth:
                     st.markdown("#### Autorización Requerida")
                     pin_ingresado = st.text_input(
@@ -536,27 +517,28 @@ try:
                         key="pin_acceso"
                     )
 
-                st.write("---")
-
                 acceso_autorizado = (pin_ingresado == "1010")
 
                 if pin_ingresado == "":
                     st.caption("Esperando credenciales de administrador para habilitar las acciones...")
                 elif not acceso_autorizado:
                     st.error("🛑 PIN incorrecto. Acceso denegado.", icon="🛑")
-                else:
+                
+                # Acciones solo habilitadas tras PIN correcto, abajo y ordenadas
+                if acceso_autorizado:
+                    st.write("---")
                     st.success("✅ Identidad validada. Seleccione la acción a ejecutar:", icon="✅")
                     
-                    # Botones con diseño limpio (ancho completo dentro de su columna)
-                    col_btn1, col_btn2 = st.columns(2)
+                    # Botones ordenados en su propia columna para evitar superposición
+                    col_btn_elimin, col_btn_guarda = st.columns(2)
 
-                    # --- BOTÓN ELIMINAR ---
+                    # --- BOTÓN ELIMINAR AZUL ---
                     if hay_seleccion:
-                        with col_btn1:
+                        with col_btn_elimin:
                             if st.button(
                                 f"🗑️ Confirmar Eliminación ({len(filas_para_eliminar)})",
                                 key="btn_eliminar",
-                                type="primary",
+                                type="primary", # azul
                                 use_container_width=True
                             ):
                                 ids_eliminar = [int(rid) for rid in filas_para_eliminar['id'].tolist()]
@@ -574,15 +556,13 @@ try:
                                 except Exception as e:
                                     st.error(f"Error al eliminar: {e}")
 
-                    # --- BOTÓN GUARDAR CAMBIOS ---
+                    # --- BOTÓN GUARDAR CAMBIOS AZUL ---
                     if hay_cambios:
-                        # Si solo hay cambios y no selección, se posiciona en la primera columna para mantener el orden
-                        btn_col = col_btn2 if hay_seleccion else col_btn1
-                        with btn_col:
+                        with col_btn_guarda:
                             if st.button(
                                 "💾 Guardar Modificaciones",
                                 key="btn_guardar",
-                                type="primary",
+                                type="primary", # azul
                                 use_container_width=True
                             ):
                                 try:
