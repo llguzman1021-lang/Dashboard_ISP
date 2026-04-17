@@ -29,6 +29,7 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #0068c9 !important; border-color: #0068c9 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0px !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
+    .login-box { max-width: 400px; margin: auto; padding: 30px; background-color: #1e1e2f; border-radius: 15px; border: 1px solid #333; text-align: center;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -49,22 +50,19 @@ def check_password(password, hashed):
 
 def init_db():
     with engine.begin() as conn:
-        # Añadir columnas de seguridad si no existen (Actualización de BD)
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0;"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;"))
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;"))
         
-        # Verificar y crear al Super Admin intocable
         res_admin = conn.execute(text("SELECT count(*) FROM users WHERE username = 'Admin'")).scalar()
         if res_admin == 0:
             admin_hash = hash_password("Areakde5")
-            conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('Admin', :hash1, 'admin', '¿Color favorito?', 'azul')"), {"hash1": admin_hash})
+            conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('Admin', :h, 'admin', '¿Color favorito?', 'azul')"), {"h": admin_hash})
             
-        # Crear visor de prueba
         res_view = conn.execute(text("SELECT count(*) FROM users WHERE username = 'viewer'")).scalar()
         if res_view == 0:
             view_hash = hash_password("view123")
-            conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('viewer', :hash2, 'viewer', '¿Mascota?', 'perro')"), {"hash2": view_hash})
+            conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('viewer', :h, 'viewer', '¿Mascota?', 'perro')"), {"h": view_hash})
 
 try:
     init_db()
@@ -72,13 +70,12 @@ except Exception as e:
     st.error(f"Error inicializando DB: {e}")
 
 # =====================================================================
-# [ETIQUETA: SISTEMA DE LOGIN Y RECUPERACIÓN AVANZADA]
+# [ETIQUETA: SISTEMA DE LOGIN Y SEGURIDAD ESTRICTA (6 INTENTOS)]
 # =====================================================================
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'role' not in st.session_state: st.session_state.role = None
 if 'username' not in st.session_state: st.session_state.username = None
 
-# Variables de estado para los campos de login (permiten limpieza)
 if 'log_u' not in st.session_state: st.session_state.log_u = ""
 if 'log_p' not in st.session_state: st.session_state.log_p = ""
 if 'log_err' not in st.session_state: st.session_state.log_err = ""
@@ -97,37 +94,36 @@ def procesar_login():
                 f_att = f_att or 0
                 
                 if is_banned:
-                    st.session_state.log_err = "❌ Cuenta bloqueada permanentemente. Contacte a su administrador."
+                    st.session_state.log_err = "❌ Cuenta bloqueada permanentemente. Contacte a un administrador."
                 elif lock_dt and lock_dt > datetime.now():
                     mins_left = (lock_dt - datetime.now()).seconds // 60 + 1
                     st.session_state.log_err = f"⏳ Cuenta bloqueada por seguridad. Intente en {mins_left} minutos."
                 elif check_password(p_in, p_hash):
-                    # Exito - Reiniciar contadores
+                    # Login Exitoso
                     conn.execute(text("UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = :id"), {"id": uid})
                     st.session_state.logged_in = True
                     st.session_state.role = role
                     st.session_state.username = u_in
                     st.session_state.log_err = ""
-                    return # Cierra la funcion sin borrar campos, el rerun hará el resto
+                    return
                 else:
-                    # Falla - Incrementar intentos
+                    # Login Fallido (Límites ajustados a 6 y 3)
                     f_att += 1
-                    if f_att >= 15:
+                    if f_att >= 6:
                         conn.execute(text("UPDATE users SET is_banned = TRUE, failed_attempts = :f WHERE id = :id"), {"f": f_att, "id": uid})
-                        st.session_state.log_err = "❌ Cuenta bloqueada permanentemente (15 intentos fallidos)."
-                    elif f_att % 5 == 0:
+                        st.session_state.log_err = "❌ Cuenta bloqueada permanentemente (6 intentos fallidos)."
+                    elif f_att % 3 == 0:
                         l_dt = datetime.now() + timedelta(minutes=5)
                         conn.execute(text("UPDATE users SET locked_until = :dt, failed_attempts = :f WHERE id = :id"), {"dt": l_dt, "f": f_att, "id": uid})
                         st.session_state.log_err = "⏳ Demasiados intentos. Cuenta bloqueada por 5 minutos."
                     else:
                         conn.execute(text("UPDATE users SET failed_attempts = :f WHERE id = :id"), {"f": f_att, "id": uid})
-                        st.session_state.log_err = f"❌ Credenciales incorrectas. Intento {f_att}/15."
+                        st.session_state.log_err = f"❌ Credenciales incorrectas. Intento {f_att}/6."
             else:
                 st.session_state.log_err = "❌ Credenciales incorrectas."
     except Exception as e:
         st.session_state.log_err = f"Error de conexión: {e}"
 
-    # Si llega aquí, significa que falló. Borramos credenciales
     st.session_state.log_u = ""
     st.session_state.log_p = ""
 
@@ -145,7 +141,6 @@ if not st.session_state.logged_in:
         with st.container(border=True):
             st.markdown("<h2 style='text-align: center;'>🔐 Acceso NOC Multinet</h2>", unsafe_allow_html=True)
             st.write("")
-            
             st.text_input("Usuario", key="log_u")
             st.text_input("Contraseña", type="password", key="log_p")
             st.button("Iniciar Sesión", type="primary", on_click=procesar_login)
@@ -165,8 +160,8 @@ if not st.session_state.logged_in:
                                         if st.button("Actualizar") and new_pass:
                                             with engine.begin() as c2:
                                                 c2.execute(text("UPDATE users SET password_hash = :h, failed_attempts = 0, locked_until = NULL, is_banned = FALSE WHERE username = :u"), {"h": hash_password(new_pass), "u": rec_user})
-                                            st.session_state.log_msg = "Contraseña restablecida. Cuenta desbloqueada. Ya puede iniciar sesión."
-                                            st.rerun() # Refresca pantalla completa
+                                            st.session_state.log_msg = "Contraseña restablecida. Cuenta desbloqueada."
+                                            st.rerun()
                                     else: st.error("Respuesta incorrecta.")
                             else: st.error("Usuario no existe.")
                     except Exception as e: st.error(f"Error: {e}")
@@ -209,8 +204,7 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
         pdf_bytes = pdf.output()
         if isinstance(pdf_bytes, str): return pdf_bytes.encode('latin-1')
         return bytes(pdf_bytes)
-    except Exception:
-        return pdf.output(dest='S').encode('latin-1')
+    except Exception: return pdf.output(dest='S').encode('latin-1')
 
 # =====================================================================
 # [ETIQUETA: VARIABLES GLOBALES Y CARGA DE DATOS]
@@ -221,12 +215,15 @@ COORDS_ZONAS = {"Papaya Garden": {"lat": 13.4925, "lon": -89.3822}, "La Libertad
 COORD_DEFAULT = {"lat": 13.6929, "lon": -89.2182}
 
 @st.cache_data(ttl=60)
-def load_data():
-    query = "SELECT * FROM incidents ORDER BY id ASC"
+def load_data_mes(mes_idx, anio):
+    start = f"{anio}-{mes_idx:02d}-01"
+    ultimo_dia = calendar.monthrange(anio, mes_idx)[1]
+    end = f"{anio}-{mes_idx:02d}-{ultimo_dia}"
+    query = "SELECT * FROM incidents WHERE fecha_inicio >= :start AND fecha_inicio <= :end ORDER BY fecha_inicio ASC"
     try:
         with engine.connect() as conn:
             conn.execute(text("ROLLBACK"))
-            return pd.read_sql(text(query), conn)
+            return pd.read_sql(text(query), conn, params={"start": start, "end": end})
     except: return pd.DataFrame()
 
 def calcular_metricas(df_kpi, horas_rango_total):
@@ -251,30 +248,28 @@ def calcular_metricas(df_kpi, horas_rango_total):
     mttr = df_kpi[df_kpi['duracion_horas'] > 0]['duracion_horas'].mean() if not df_kpi[df_kpi['duracion_horas'] > 0].empty else 0.0
     return downtime_bruto, acd, sla_resultante, mttr, int(df_kpi['clientes_afectados'].sum()), (df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0)
 
-df_total = pd.DataFrame()
-try:
-    df_total = load_data()
-    if not df_total.empty:
-        df_total.columns = [c.lower() for c in df_total.columns]
-        df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], errors='coerce')
-        df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None)
-        df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
-        df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
-except Exception as e: st.error(f"⚠️ Error BD: {e}")
-
 # =====================================================================
-# [ETIQUETA: SIDEBAR]
+# [ETIQUETA: SIDEBAR Y FILTRO ANUAL + MENSUAL]
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v10.0")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v11.0")
     
-    anio_actual = datetime.now().year
+    anio_actual_real = datetime.now().year
+    anios_disponibles = sorted(list(set([anio_actual_real+1, anio_actual_real, anio_actual_real-1, anio_actual_real-2])), reverse=True)
+    
+    anio_seleccionado = st.selectbox("🗓️ Ciclo de Análisis Anual", anios_disponibles, index=anios_disponibles.index(anio_actual_real))
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
-    mes_index = meses_nombres.index(mes_seleccionado) + 1
-    dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
     
-    df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy() if not df_total.empty else pd.DataFrame()
+    mes_index = meses_nombres.index(mes_seleccionado) + 1
+    dias_mes = calendar.monthrange(anio_seleccionado, mes_index)[1]
+    
+    df_mes = load_data_mes(mes_index, anio_seleccionado)
+    if not df_mes.empty:
+        df_mes.columns = [c.lower() for c in df_mes.columns]
+        df_mes['fecha_convertida'] = pd.to_datetime(df_mes['fecha_inicio'], errors='coerce')
+        df_mes['duracion_horas'] = pd.to_numeric(df_mes['duracion_horas'], errors='coerce').fillna(0)
+        df_mes['clientes_afectados'] = pd.to_numeric(df_mes['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     
     st.divider()
     st.markdown("### 📉 Resumen Ejecutivo")
@@ -282,10 +277,9 @@ with st.sidebar:
         d_tot, acd_s, sla_s, mttr_side, cl_side, max_h_s = calcular_metricas(df_mes, dias_mes * 24)
         st.metric("Promedio Resolución", f"{mttr_side:.2f} horas")
         st.metric("Total Afectados", f"{cl_side} clientes")
-        
         st.divider()
-        pdf_data = generar_pdf_ejecutivo(mes_seleccionado, anio_actual, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
-        st.download_button(label="📥 Descargar PDF Ejecutivo", data=pdf_data, file_name=f"Reporte_NOC_{mes_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
+        pdf_data = generar_pdf_ejecutivo(mes_seleccionado, anio_seleccionado, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
+        st.download_button(label="📥 Descargar PDF Ejecutivo", data=pdf_data, file_name=f"Reporte_NOC_{mes_seleccionado}_{anio_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
     else:
         st.info("Sin datos registrados.")
         
@@ -300,27 +294,31 @@ with st.sidebar:
 # [ETIQUETA: ESTRUCTURA DE PESTAÑAS SEGÚN ROL]
 # =====================================================================
 nombres_pestanas = ["📊 Dashboard de Monitoreo"]
-if st.session_state.role == 'admin': nombres_pestanas.extend(["📝 Registro Operativo", "🔐 Auditoría BD", "👥 Usuarios y Logs"])
+if st.session_state.role == 'admin':
+    nombres_pestanas.extend(["📝 Registro Operativo", "🔐 Auditoría BD", "👥 Usuarios y Logs"])
 
 tabs = st.tabs(nombres_pestanas)
 
 # ---------------------------------------------------------------------
-# [ETIQUETA: TAB 1 - DASHBOARD VISUAL]
+# [ETIQUETA: TAB 1 - DASHBOARD VISUAL PROFESIONAL]
 # ---------------------------------------------------------------------
 with tabs[0]:
-    st.title(f"Visor de Rendimiento: {mes_seleccionado} {anio_actual}")
+    st.title(f"Visor de Rendimiento: {mes_seleccionado} {anio_seleccionado}")
+
     if df_mes.empty:
-        st.success(f"🟢 Excelente estado: No hay fallas registradas en {mes_seleccionado}.")
+        st.success(f"🟢 Excelente estado: No hay fallas registradas en {mes_seleccionado} {anio_seleccionado}.")
     else:
         df_filtrado = df_mes.copy()
         downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, dias_mes * 24)
         delta_m, delta_a, delta_s, delta_dias = None, None, None, None
 
         if mes_index > 1:
-            mes_pasado_nom = meses_nombres[mes_index - 2]
-            df_pasado = df_total[df_total['mes_nombre'] == mes_pasado_nom].copy() if not df_total.empty else pd.DataFrame()
+            df_pasado = load_data_mes(mes_index - 1, anio_seleccionado)
             if not df_pasado.empty:
-                dias_pasado = calendar.monthrange(anio_actual, mes_index - 1)[1]
+                df_pasado.columns = [c.lower() for c in df_pasado.columns]
+                df_pasado['duracion_horas'] = pd.to_numeric(df_pasado['duracion_horas'], errors='coerce').fillna(0)
+                df_pasado['clientes_afectados'] = pd.to_numeric(df_pasado['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+                dias_pasado = calendar.monthrange(anio_seleccionado, mes_index - 1)[1]
                 d_b_p, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, dias_pasado * 24)
                 if mttr_p > 0: delta_m = f"{avg_mttr - mttr_p:+.1f} horas"
                 if acd_p > 0: delta_a = f"{acd_horas - acd_p:+.1f} horas"
@@ -339,7 +337,7 @@ with tabs[0]:
         k6.metric("Impacto Acumulado", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse")
 
         st.divider()
-        st.markdown("### 🗺️ Análisis Geoespacial y Causas (Haz Clic en el Pastel)")
+        st.markdown("### 🗺️ Análisis Geoespacial y Causas Principales")
         col_m1, col_m2 = st.columns([3, 2])
         with col_m1:
             df_mapa = df_filtrado.copy()
@@ -353,10 +351,11 @@ with tabs[0]:
 
         with col_m2:
             causas_cortas = {"Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra", "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía", "Corrosión en Equipos": "Corrosión", "Daños por Fauna": "Fauna", "Falla de Hardware": "Hardware", "Falla de Configuración": "Configuración", "Saturación de Tráfico": "Saturación", "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI", "Mantenimiento Programado": "Mantenimiento", "Vandalismo o Hurto": "Vandalismo", "Condiciones Climáticas": "Clima"}
-            df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
+            df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=False)
             df_caus['Causa_Corta'] = df_caus['causa_raiz'].map(lambda x: causas_cortas.get(x, str(x).split()[0]))
+            # Gráfico de dona perfeccionado
             fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
-            fig_rca.update_traces(textposition='inside', textinfo='percent+label', textfont_size=14)
+            fig_rca.update_traces(textposition='inside', textinfo='percent+label', textfont_size=14, hoverinfo='label+percent+value')
             fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
             seleccion_pastel = st.plotly_chart(fig_rca, use_container_width=True, on_select="rerun", selection_mode="points")
         
@@ -371,37 +370,54 @@ with tabs[0]:
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
-            fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#29b09d'])
+            # Barras con texto numérico incorporado
+            fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#29b09d'], text_auto='.0f')
+            fig_eq.update_traces(textposition='outside', cliponaxis=False)
             fig_eq.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
             st.plotly_chart(fig_eq, use_container_width=True)
 
         with col_g2:
+            df_serv = df_filtrado.groupby('servicio').size().reset_index(name='Eventos').sort_values('Eventos', ascending=True)
+            fig_serv = px.bar(df_serv, x='Eventos', y='servicio', orientation='h', title="Por Servicio", color='servicio', color_discrete_sequence=PALETA_CORP, text_auto='.0f')
+            fig_serv.update_traces(textposition='outside', cliponaxis=False)
+            fig_serv.update_layout(showlegend=False, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
+            st.plotly_chart(fig_serv, use_container_width=True)
+
+        st.markdown("### 📈 Análisis Temporal")
+        col_g3, col_g4 = st.columns(2)
+        with col_g3:
             df_trend = df_filtrado.copy()
             df_trend['Dia'] = pd.to_datetime(df_trend['fecha_convertida']).dt.day
             df_t_agg = df_trend.groupby('Dia').size().reset_index(name='Eventos')
             df_t_agg['Mes'] = 'Actual'
+            
+            # Tendencia Diaria convertida a Gráfico de Líneas con Puntos exactos
             if mes_index > 1 and not df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].empty:
                 df_p_trend = df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].copy()
                 df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_convertida']).dt.day
                 df_p_agg = df_p_trend.groupby('Dia').size().reset_index(name='Eventos')
                 df_p_agg['Mes'] = 'Anterior'
                 df_t_agg = pd.concat([df_t_agg, df_p_agg])
-            fig_trend = px.line(df_t_agg, x='Dia', y='Eventos', color='Mes', title="Tendencia Diaria (vs Mes Anterior)", color_discrete_map={"Actual": "#0068c9", "Anterior": "rgba(255,255,255,0.2)"})
+
+            fig_trend = px.line(df_t_agg, x='Dia', y='Eventos', color='Mes', title="Tendencia Diaria (vs Mes Anterior)", color_discrete_map={"Actual": "#0068c9", "Anterior": "rgba(255,255,255,0.3)"}, markers=True)
             fig_trend.update_traces(fill='tozeroy')
-            fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Día del Mes", yaxis_title="")
+            fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Día del Mes", yaxis_title="Cantidad de Fallas", xaxis=dict(tickmode='linear', tick0=1, dtick=2))
             st.plotly_chart(fig_trend, use_container_width=True)
             
-        st.divider()
-        st.markdown("### ⏱️ Línea de Tiempo de Fallas Simultáneas (Gantt)")
-        df_gantt = df_filtrado.copy()
-        df_gantt['Start'] = pd.to_datetime(df_gantt['fecha_inicio'].astype(str) + ' ' + df_gantt['hora_inicio'].astype(str), errors='coerce')
-        df_gantt['End'] = pd.to_datetime(df_gantt['fecha_fin'].astype(str) + ' ' + df_gantt['hora_fin'].astype(str), errors='coerce')
-        df_gantt = df_gantt.dropna(subset=['Start', 'End'])
-        if not df_gantt.empty:
-            fig_gantt = px.timeline(df_gantt, x_start="Start", x_end="End", y="zona", color="causa_raiz", color_discrete_sequence=PALETA_CORP)
-            fig_gantt.update_yaxes(autorange="reversed")
-            fig_gantt.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_gantt, use_container_width=True)
+        with col_g4:
+            df_gantt = df_filtrado.copy()
+            df_gantt['Start'] = pd.to_datetime(df_gantt['fecha_inicio'].astype(str) + ' ' + df_gantt['hora_inicio'].astype(str), errors='coerce')
+            df_gantt['End'] = pd.to_datetime(df_gantt['fecha_fin'].astype(str) + ' ' + df_gantt['hora_fin'].astype(str), errors='coerce')
+            df_gantt = df_gantt.dropna(subset=['Start', 'End'])
+            if not df_gantt.empty:
+                # Gantt con bordes blancos para mejor legibilidad
+                fig_gantt = px.timeline(df_gantt, x_start="Start", x_end="End", y="zona", color="causa_raiz", color_discrete_sequence=PALETA_CORP, title="Fallas Simultáneas (Gantt)")
+                fig_gantt.update_yaxes(autorange="reversed")
+                fig_gantt.update_traces(marker_line_width=1, marker_line_color="rgba(255,255,255,0.5)", opacity=0.9)
+                fig_gantt.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_gantt, use_container_width=True)
+            else:
+                st.info("Sin datos exactos de hora para generar Gantt.")
 
 # ---------------------------------------------------------------------
 # [ETIQUETA: TABS DE ADMINISTRADOR]
@@ -527,11 +543,11 @@ if st.session_state.role == 'admin':
             st.divider()
             st.markdown("### 📥 Exportar Reportes")
             c_exp1, c_exp2 = st.columns(2)
-            with c_exp1: st.download_button("📥 Exportar Datos Crudos (CSV)", df_display.to_csv(index=False).encode('utf-8'), f"Datos_NOC_{mes_seleccionado}.csv", "text/csv", use_container_width=True)
+            with c_exp1: st.download_button("📥 Exportar Datos Crudos (CSV)", df_display.to_csv(index=False).encode('utf-8'), f"Datos_NOC_{mes_seleccionado}_{anio_seleccionado}.csv", "text/csv", use_container_width=True)
             with c_exp2:
                 d_tot, acd_s, sla_s, mttr_side, cl_side, max_h_s = calcular_metricas(df_mes, dias_mes * 24)
-                pdf_data_tab3 = generar_pdf_ejecutivo(mes_seleccionado, anio_actual, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
-                st.download_button(label="📥 Descargar Reporte Ejecutivo (PDF)", data=pdf_data_tab3, file_name=f"Reporte_NOC_{mes_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
+                pdf_data_tab3 = generar_pdf_ejecutivo(mes_seleccionado, anio_seleccionado, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
+                st.download_button(label="📥 Descargar Reporte Ejecutivo (PDF)", data=pdf_data_tab3, file_name=f"Reporte_NOC_{mes_seleccionado}_{anio_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
 
     with tabs[3]:
         st.title("👥 Gestión de Usuarios y Auditoría")
