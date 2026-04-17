@@ -16,9 +16,9 @@ COORDS = {"Papaya Garden": [13.4925, -89.3822], "La Libertad - Conchalio": [13.4
 
 st.markdown("""
     <style>
-    /* Efecto hover/sombra para TODOS los botones */
+    /* Efecto hover para botones (Sin sombra naranja, pero con salto) */
     div.stButton > button { border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important; }
-    div.stButton > button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(241, 92, 34, 0.4) !important; }
+    div.stButton > button:hover { transform: translateY(-2px); }
     div[data-testid="stButton-delete"] > button { background-color: #c0392b !important; color: white !important;}
     div[data-testid="stButton-save"] > button { background-color: #27ae60 !important; color: white !important;}
     div.stButton > button:first-child { background-color: #0068c9; color: white; }
@@ -142,17 +142,27 @@ if not st.session_state.logged_in:
     with c2:
         if st.session_state.log_msg: st.toast(st.session_state.log_msg, icon="✅"); st.session_state.log_msg = ""
         if st.session_state.log_err: st.error(st.session_state.log_err); st.session_state.log_err = ""
+        
         with st.container(border=True):
-            # LOGO EN LOGIN REEMPLAZANDO EL CANDADO
-            col_l1, col_l2, col_l3 = st.columns([1, 1.5, 1])
+            # LOGO PEQUEÑO Y TÍTULO ALINEADOS
+            col_l1, col_l2 = st.columns([1, 4])
+            with col_l1:
+                try: st.image("logo.png")
+                except: st.markdown("<h2>🌐</h2>", unsafe_allow_html=True)
             with col_l2:
-                try: st.image("logo.png", use_container_width=True)
-                except: st.markdown("<h2 style='text-align: center; color: #f15c22;'>MULTINET</h2>", unsafe_allow_html=True)
-            st.markdown("<h3 style='text-align: center;'>Acceso NOC Central</h3><br>", unsafe_allow_html=True)
+                st.markdown("<div style='display: flex; align-items: center; height: 100%;'><h3 style='margin: 0;'>Acceso NOC Central</h3></div>", unsafe_allow_html=True)
             
+            st.write("")
             st.text_input("Usuario", key="log_u")
             st.text_input("Contraseña", type="password", key="log_p")
-            st.button("Iniciar Sesión", type="primary", on_click=do_login)
+            
+            # BOTÓN DE LOGIN CENTRADO
+            st.write("")
+            _, c_btn, _ = st.columns([1, 2, 1])
+            with c_btn:
+                st.button("Iniciar Sesión", type="primary", on_click=do_login, use_container_width=True)
+            
+            st.write("")
             with st.expander("¿Olvidó su contraseña?"):
                 ru = st.text_input("Ingrese su usuario:")
                 if ru:
@@ -174,10 +184,11 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =====================================================================
-# [SIDEBAR Y EXTRACCIÓN DE DATOS]
+# [SIDEBAR Y EXTRACCIÓN DE DATOS GLOBALES]
 # =====================================================================
 with st.sidebar:
-    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v12.2")
+    st.caption(f"Usuario: **{st.session_state.username}** | v12.3")
+    
     anio_act = datetime.now(SV_TZ).year
     anios = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
     a_sel = st.selectbox("🗓️ Ciclo Anual", anios, index=anios.index(anio_act))
@@ -197,8 +208,7 @@ with st.sidebar:
         dt, acds, slas, mttrs, cls, mhs = calc_kpis(df_m, d_mes * 24)
         pdf_data = generar_pdf(m_sel, a_sel, mttrs, slas, acds, cls, dt/24.0, df_m)
         st.download_button(label="📥 Descargar Reporte PDF", data=pdf_data, file_name=f"Reporte_NOC_{m_sel}_{a_sel}.pdf", mime="application/pdf", use_container_width=True)
-    else:
-        st.info("Sin datos registrados.")
+    else: st.info("Sin datos registrados.")
         
     st.divider()
     if st.button("🚪 Cerrar Sesión", use_container_width=True): log_audit("LOGOUT", "Sesión cerrada."); st.session_state.clear(); st.rerun()
@@ -227,7 +237,6 @@ with tabs[0]:
                 if dbp > 0: dd = f"{(dt/24.0) - (dbp/24.0):+.1f} días"
 
         st.markdown("### 🎯 Indicadores Clave de Rendimiento (KPIs)")
-        # Columnas para centrar visualmente los KPIs
         _, k1, k2, k3, _ = st.columns([0.5, 2, 2, 2, 0.5])
         k1.metric("MTTR", f"{mttr:.2f} hrs", dm, "inverse", help="Tiempo Promedio de Resolución")
         k2.metric("Disponibilidad (SLA)", f"{sla:.2f}%", ds, help="Nivel integral de servicio")
@@ -238,12 +247,9 @@ with tabs[0]:
         k4.metric("Falla Crítica", f"{mh:.2f} hrs")
         k5.metric("Afectados", f"{cl} usuarios")
         k6.metric("Impacto Acumulado", f"{dt/24.0:.1f} días", dd, "inverse")
-        
-        # Mensaje Restaurado
         st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad mostrada es una estimación base cuando no se cuenta con el dato exacto para no alterar promedios.")
         st.divider()
 
-        # Gráficas Apiladas Verticalmente para mejor lectura
         st.markdown("### 🗺️ Análisis Geoespacial y Causas Principales")
         df_map = df_m.copy()
         df_map['lat'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["Servidores Gabriela Mistral"])[0])
@@ -259,11 +265,8 @@ with tabs[0]:
         dc['Causa'] = dc['causa_raiz'].map(lambda x: cc.get(x, str(x).split()[0]))
         fig_p = px.pie(dc, names='Causa', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
         fig_p.update_traces(textinfo='percent+label', hoverinfo='label+value'); fig_p.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
-        
-        # Pastel centrado para que no sea inmenso
         _, c_pie, _ = st.columns([1, 2, 1])
-        with c_pie:
-            sel_p = st.plotly_chart(fig_p, use_container_width=True, on_select="rerun", selection_mode="points")
+        with c_pie: sel_p = st.plotly_chart(fig_p, use_container_width=True, on_select="rerun", selection_mode="points")
         if sel_p and sel_p.selection.point_indices:
             cx = dc.iloc[sel_p.selection.point_indices[0]]['Causa']
             st.info(f"🔍 **Detalle:** '{cx}'"); st.dataframe(df_m[df_m['causa_raiz'].map(lambda x: cc.get(x, str(x).split()[0])) == cx][['fecha_inicio', 'zona', 'equipo_afectado', 'duracion_horas', 'descripcion']], hide_index=True)
@@ -355,7 +358,6 @@ if st.session_state.role == 'admin':
         st.markdown("### 🗂️ Auditoría de Base de Datos")
         if df_m.empty: st.info("No hay datos.")
         else:
-            # Alineación del buscador y paginador
             c_s, c_p = st.columns([4, 1])
             bq = c_s.text_input("🔎 Buscar:", placeholder="Filtrar...")
             df_d = df_m[df_m.astype(str).apply(lambda x: x.str.contains(bq, case=False, na=False)).any(axis=1)].copy() if bq else df_m.copy()
@@ -402,11 +404,9 @@ if st.session_state.role == 'admin':
                         st.toast(f"Creado {nu}", icon="✅"); time.sleep(1); st.rerun()
                     except: st.toast("Error: Usuario duplicado", icon="❌")
         with clg:
-            # Tabla de Administrar Usuarios
             st.markdown("#### 📋 Panel de Usuarios Activos")
             try:
-                with engine.connect() as cn:
-                    df_usrs = pd.read_sql(text("SELECT id, username, role, is_banned, failed_attempts FROM users"), cn)
+                with engine.connect() as cn: df_usrs = pd.read_sql(text("SELECT id, username, role, is_banned, failed_attempts FROM users"), cn)
                 df_usrs.insert(0, "Seleccionar", False)
                 ed_usrs = st.data_editor(df_usrs, column_config={"Seleccionar": st.column_config.CheckboxColumn("✔", default=False), "id": None, "username": "Usuario", "role": "Rol", "is_banned": "Baneado", "failed_attempts": "Intentos Fallidos"}, use_container_width=True, hide_index=True)
                 
