@@ -178,20 +178,21 @@ with st.sidebar:
         clientes = st.number_input("👤 Cantidad de Clientes Afectados (Unidades)", min_value=0, step=1)
 
     causa = st.selectbox("🛠️ Diagnóstico Técnico (Causa Raíz)", [
-        "Corte de Fibra Óptica por Terceros (Vandalismo/Accidente)",
-        "Caída de Árboles o Ramas sobre Tendido de Fibra",
-        "Interrupción de Energía Comercial (Falla Eléctrica/Tormenta)",
-        "Corrosión Salina en Equipos o Nodos (Zonas Costeras)",
-        "Daños por Fauna Silvestre o Aves (Zonas Boscosas/Rurales)",
-        "Falla de Hardware (Desgaste, Daño o Sobrecalentamiento)",
-        "Desajuste de Configuración Lógica (Software/Routing)",
-        "Falla de Redundancia en Anillo de Fibra",
-        "Saturación de Tráfico o Cuello de Botella en la Red",
-        "Saturación de Disco en Servidor UNIFI",
-        "Problemas de Inicio en Servidor UNIFI",
-        "Mantenimiento Programado o Ventana de Trabajo",
-        "Vandalismo, Hurto o Sabotaje Directo",
-        "Condiciones Climáticas Adversas (Tormentas, Fuertes Vientos)"
+        "Corte de Fibra por Terceros",
+        "Corte de Fibra (No Especificado)",
+        "Caída de Árboles sobre Fibra",
+        "Falla de Energía Comercial",
+        "Corrosión en Equipos",
+        "Daños por Fauna",
+        "Falla de Hardware",
+        "Falla de Configuración",
+        "Falla de Redundancia",
+        "Saturación de Tráfico",
+        "Saturación en Servidor UNIFI",
+        "Falla de Inicio en UNIFI",
+        "Mantenimiento Programado",
+        "Vandalismo o Hurto",
+        "Condiciones Climáticas"
     ])
     desc = st.text_area("📝 Descripción Técnica y Detallada del Incidente")
     
