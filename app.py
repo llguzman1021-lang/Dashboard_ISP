@@ -99,7 +99,6 @@ def procesar_login():
                     mins_left = (lock_dt - datetime.now()).seconds // 60 + 1
                     st.session_state.log_err = f"⏳ Cuenta bloqueada por seguridad. Intente en {mins_left} minutos."
                 elif check_password(p_in, p_hash):
-                    # Login Exitoso
                     conn.execute(text("UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = :id"), {"id": uid})
                     st.session_state.logged_in = True
                     st.session_state.role = role
@@ -107,7 +106,6 @@ def procesar_login():
                     st.session_state.log_err = ""
                     return
                 else:
-                    # Login Fallido (Límites ajustados a 6 y 3)
                     f_att += 1
                     if f_att >= 6:
                         conn.execute(text("UPDATE users SET is_banned = TRUE, failed_attempts = :f WHERE id = :id"), {"f": f_att, "id": uid})
@@ -253,7 +251,7 @@ def calcular_metricas(df_kpi, horas_rango_total):
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v11.0")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v11.1")
     
     anio_actual_real = datetime.now().year
     anios_disponibles = sorted(list(set([anio_actual_real+1, anio_actual_real, anio_actual_real-1, anio_actual_real-2])), reverse=True)
@@ -312,6 +310,7 @@ with tabs[0]:
         downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, dias_mes * 24)
         delta_m, delta_a, delta_s, delta_dias = None, None, None, None
 
+        df_pasado = pd.DataFrame()
         if mes_index > 1:
             df_pasado = load_data_mes(mes_index - 1, anio_seleccionado)
             if not df_pasado.empty:
@@ -353,7 +352,6 @@ with tabs[0]:
             causas_cortas = {"Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra", "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía", "Corrosión en Equipos": "Corrosión", "Daños por Fauna": "Fauna", "Falla de Hardware": "Hardware", "Falla de Configuración": "Configuración", "Saturación de Tráfico": "Saturación", "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI", "Mantenimiento Programado": "Mantenimiento", "Vandalismo o Hurto": "Vandalismo", "Condiciones Climáticas": "Clima"}
             df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=False)
             df_caus['Causa_Corta'] = df_caus['causa_raiz'].map(lambda x: causas_cortas.get(x, str(x).split()[0]))
-            # Gráfico de dona perfeccionado
             fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
             fig_rca.update_traces(textposition='inside', textinfo='percent+label', textfont_size=14, hoverinfo='label+percent+value')
             fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
@@ -370,7 +368,6 @@ with tabs[0]:
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
-            # Barras con texto numérico incorporado
             fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#29b09d'], text_auto='.0f')
             fig_eq.update_traces(textposition='outside', cliponaxis=False)
             fig_eq.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
@@ -391,10 +388,10 @@ with tabs[0]:
             df_t_agg = df_trend.groupby('Dia').size().reset_index(name='Eventos')
             df_t_agg['Mes'] = 'Actual'
             
-            # Tendencia Diaria convertida a Gráfico de Líneas con Puntos exactos
-            if mes_index > 1 and not df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].empty:
-                df_p_trend = df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].copy()
-                df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_convertida']).dt.day
+            # REPARADO: Se utiliza df_pasado para la tendencia superpuesta
+            if mes_index > 1 and not df_pasado.empty:
+                df_p_trend = df_pasado.copy()
+                df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_inicio'], errors='coerce').dt.day
                 df_p_agg = df_p_trend.groupby('Dia').size().reset_index(name='Eventos')
                 df_p_agg['Mes'] = 'Anterior'
                 df_t_agg = pd.concat([df_t_agg, df_p_agg])
@@ -410,7 +407,6 @@ with tabs[0]:
             df_gantt['End'] = pd.to_datetime(df_gantt['fecha_fin'].astype(str) + ' ' + df_gantt['hora_fin'].astype(str), errors='coerce')
             df_gantt = df_gantt.dropna(subset=['Start', 'End'])
             if not df_gantt.empty:
-                # Gantt con bordes blancos para mejor legibilidad
                 fig_gantt = px.timeline(df_gantt, x_start="Start", x_end="End", y="zona", color="causa_raiz", color_discrete_sequence=PALETA_CORP, title="Fallas Simultáneas (Gantt)")
                 fig_gantt.update_yaxes(autorange="reversed")
                 fig_gantt.update_traces(marker_line_width=1, marker_line_color="rgba(255,255,255,0.5)", opacity=0.9)
