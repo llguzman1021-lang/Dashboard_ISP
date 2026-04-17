@@ -1,4 +1,3 @@
-```python
 import streamlit as st
 import pandas as pd
 import plotly.express as px
@@ -598,4 +597,3 @@ try:
 
 except Exception as e:
     st.error(f"⚠️ Error Interno del Motor de Procesamiento de Datos: {e}")
-```
