@@ -156,7 +156,6 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
     else:
         pdf.cell(200, 8, txt="Sin incidencias registradas.", ln=True)
         
-    # Corrección para compatibilidad fpdf vs fpdf2
     try:
         pdf_bytes = pdf.output()
         if isinstance(pdf_bytes, str):
@@ -234,7 +233,7 @@ except Exception as e:
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.2")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.3")
     
     anio_actual = datetime.now().year
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
@@ -400,6 +399,8 @@ if st.session_state.role == 'admin':
 
                 st.divider()
                 c_t1, c_t2 = st.columns(2)
+                
+                # --- MENSAJES INFO RESTAURADOS ---
                 with c_t1:
                     f_i = st.date_input("📅 Fecha de Inicio")
                     asignar_hi = st.toggle("🕒 Asignar Hora de Inicio", value=False)
@@ -408,6 +409,7 @@ if st.session_state.role == 'admin':
                         hora_inicio_final = h_i.strftime("%H:%M:%S")
                     else:
                         hora_inicio_final = None
+                        st.info("ℹ️ Al no asignar hora de inicio, no se calculará duración.")
 
                 with c_t2:
                     f_f = st.date_input("📅 Fecha de Cierre")
@@ -417,6 +419,7 @@ if st.session_state.role == 'admin':
                         final_h = h_f.strftime("%H:%M:%S")
                     else:
                         final_h = None
+                        st.info("ℹ️ Al no asignar hora de cierre, no se calculará duración.")
 
                 duracion = 0
                 desc_conocimiento = "Total" if hora_inicio_final and final_h else "Parcial"
@@ -426,6 +429,7 @@ if st.session_state.role == 'admin':
 
                 st.divider()
                 c_f1, c_f2 = st.columns(2)
+                
                 with c_f1:
                     if categoria == "Cliente Corporativo": 
                         clientes_form = 1
@@ -499,6 +503,18 @@ if st.session_state.role == 'admin':
                                 })
                                 log_audit("UPDATE", f"Modificado registro ID {int(edit_row['id'])}")
                     st.cache_data.clear(); st.rerun()
+
+            # --- NUEVO: SECCIÓN DE EXPORTACIÓN EN TAB 3 ---
+            st.divider()
+            st.markdown("### 📥 Exportar Reportes")
+            c_exp1, c_exp2 = st.columns(2)
+            with c_exp1:
+                st.download_button("📥 Exportar Datos Crudos (CSV)", df_display.to_csv(index=False).encode('utf-8'), f"Datos_NOC_{mes_seleccionado}.csv", "text/csv", use_container_width=True)
+            with c_exp2:
+                # Reutilizamos la función del sidebar
+                d_tot, acd_s, sla_s, mttr_side, cl_side, max_h_s = calcular_metricas(df_mes, dias_mes * 24)
+                pdf_data_tab3 = generar_pdf_ejecutivo(mes_seleccionado, anio_actual, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
+                st.download_button(label="📥 Descargar Reporte Ejecutivo (PDF)", data=pdf_data_tab3, file_name=f"Reporte_NOC_{mes_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
 
     with tabs[3]:
         st.title("👥 Gestión de Usuarios y Auditoría")
