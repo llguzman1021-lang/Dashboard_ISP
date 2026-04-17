@@ -465,10 +465,10 @@ try:
                 "worksheet_name": None,
                 "gsheet_id": None,
                 "servicio": st.column_config.SelectboxColumn("Servicio", options=servicio_opciones, required=True),
-                "fecha_inicio": st.column_config.TextColumn("F. Inicio"),
-                "hora_inicio": st.column_config.TextColumn("H. Inicio"),
-                "fecha_fin": st.column_config.TextColumn("F. Cierre"),
-                "hora_fin": st.column_config.TextColumn("H. Cierre"),
+                "fecha_inicio": st.column_config.DateColumn("F. Inicio", format="DD/MM/YYYY"),
+"hora_inicio": st.column_config.TimeColumn("H. Inicio"),
+"fecha_fin": st.column_config.DateColumn("F. Cierre", format="DD/MM/YYYY"),
+"hora_fin": st.column_config.TimeColumn("H. Cierre"),
                 "duracion_horas": st.column_config.NumberColumn("Duración (Horas)", disabled=True, format="%.2f"),
                 "conocimiento_tiempos": st.column_config.SelectboxColumn(
                     "Nivel de Precisión del Registro", options=conoce_opciones, required=True)
