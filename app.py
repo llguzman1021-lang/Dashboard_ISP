@@ -8,7 +8,6 @@ import time
 
 # =====================================================================
 # [ETIQUETA: CONFIGURACIÓN INICIAL Y ESTILOS AVANZADOS]
-# Define el título, icono y los estilos CSS que hacen lucir profesional la app.
 # =====================================================================
 st.set_page_config(
     page_title="Multinet NOC Analytics | Enterprise Operations",
@@ -32,34 +31,34 @@ st.markdown("""
     [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 36px !important; font-weight: 800 !important; }
     [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 16px !important; font-weight: 500 !important; }
     
-    /* MEJORA VISUAL: Pestañas (Tabs) Gigantes y Estilizadas */
-    div[data-baseweb="tab-list"] {
-        gap: 8px;
+    /* MEJORA VISUAL: Pestañas (Tabs) Mega-Destacadas estilo Cápsula */
+    div[data-testid="stTabs"] {
         background-color: transparent;
     }
-    div[data-baseweb="tab"] {
-        background-color: #1e1e2f;
-        border-radius: 8px 8px 0px 0px;
-        padding: 12px 24px;
-        border: 1px solid #333;
-        border-bottom: none;
+    button[data-baseweb="tab"] {
+        background-color: #1e1e2f !important;
+        border-radius: 12px 12px 0px 0px !important;
+        margin-right: 10px !important;
+        padding: 16px 32px !important;
+        border: 2px solid #333 !important;
+        border-bottom: none !important;
     }
-    div[data-baseweb="tab"]:hover { background-color: #2a2a3f; }
-    div[data-baseweb="tab"][aria-selected="true"] {
-        background-color: #0068c9;
+    button[data-baseweb="tab"]:hover { background-color: #2a2a3f !important; }
+    button[data-baseweb="tab"][aria-selected="true"] {
+        background-color: #0068c9 !important;
+        border-color: #0068c9 !important;
     }
-    div[data-baseweb="tab"] span {
-        font-size: 18px; font-weight: 600; color: #a5a8b5;
+    button[data-baseweb="tab"] p {
+        font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0px !important;
     }
-    div[data-baseweb="tab"][aria-selected="true"] span {
-        color: #ffffff;
+    button[data-baseweb="tab"][aria-selected="true"] p {
+        color: #ffffff !important;
     }
     </style>
     """, unsafe_allow_html=True)
 
 # =====================================================================
 # [ETIQUETA: VARIABLES GLOBALES Y CONEXIÓN A BASE DE DATOS]
-# Paletas de colores, listas de meses, coordenadas y motor SQL Neon.
 # =====================================================================
 PALETA_CORP = ['#0068c9', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b', '#7defa1']
 meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -81,7 +80,6 @@ engine = get_engine()
 
 # =====================================================================
 # [ETIQUETA: FUNCIONES DE CARGA Y PROCESAMIENTO MATEMÁTICO]
-# Extrae datos de BD y calcula los KPIs operativos (SLA, MTTR, ACD).
 # =====================================================================
 @st.cache_data(ttl=300)
 def load_data():
@@ -118,21 +116,7 @@ def calcular_metricas(df_kpi, horas_mes_total):
     mttr = df_kpi[df_kpi['duracion_horas'] > 0]['duracion_horas'].mean() if not df_kpi[df_kpi['duracion_horas'] > 0].empty else 0.0
     return downtime_bruto, acd, sla_resultante, mttr, int(df_kpi['clientes_afectados'].sum()), (df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0)
 
-# =====================================================================
-# [ETIQUETA: SIDEBAR Y PREPARACIÓN DE DATOS]
-# Menú lateral para opciones globales y limpieza de datos en memoria.
-# =====================================================================
-with st.sidebar:
-    st.title("🏢 Centro de Operaciones")
-    st.caption("Panel de Control Multinet | Enterprise v5.0")
-    mes_seleccionado = st.selectbox("📅 Ciclo de Análisis", meses_nombres, index=datetime.now().month - 1)
-    st.divider()
-    st.markdown("### ⚙️ Herramientas NOC")
-    if st.toggle("🔄 Modo TV (Auto-Refresh 60s)"):
-        import streamlit.components.v1 as components
-        components.html("<meta http-equiv='refresh' content='60'>", height=0)
-        st.caption("Pantalla actualizándose automáticamente.")
-
+# --- PROCESAMIENTO INICIAL DE DATOS ---
 df_total = pd.DataFrame()
 try:
     df_total = load_data()
@@ -145,7 +129,44 @@ try:
 except Exception as e:
     st.error(f"⚠️ Error BD: {e}")
 
-df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy() if not df_total.empty else pd.DataFrame()
+# =====================================================================
+# [ETIQUETA: SIDEBAR ENRIQUECIDO Y PREPARACIÓN DE DATOS]
+# =====================================================================
+with st.sidebar:
+    st.title("🏢 Centro de Operaciones")
+    st.caption("Panel de Control Multinet | Enterprise v6.0")
+    mes_seleccionado = st.selectbox("📅 Ciclo de Análisis", meses_nombres, index=datetime.now().month - 1)
+    
+    # Extraemos el dataframe del mes aquí para poder usar las métricas en la barra lateral
+    df_mes_sidebar = df_total[df_total['mes_nombre'] == mes_seleccionado].copy() if not df_total.empty else pd.DataFrame()
+    
+    st.divider()
+    st.markdown("### ⚙️ Herramientas NOC")
+    if st.toggle("🔄 Modo TV (Auto-Refresh 60s)"):
+        import streamlit.components.v1 as components
+        components.html("<meta http-equiv='refresh' content='60'>", height=0)
+        st.caption("Pantalla actualizándose automáticamente.")
+    
+    # MEJORA: Resumen Ejecutivo en la barra lateral para evitar que se vea vacía
+    st.divider()
+    st.markdown("### 📉 Resumen Ejecutivo")
+    if not df_mes_sidebar.empty:
+        mes_index_side = meses_nombres.index(mes_seleccionado) + 1
+        dias_mes_side = calendar.monthrange(datetime.now().year, mes_index_side)[1]
+        _, _, _, mttr_side, cl_side, _ = calcular_metricas(df_mes_sidebar, dias_mes_side * 24)
+        
+        fallas_act_side = df_mes_sidebar[(df_mes_sidebar['hora_fin'].isnull()) | (df_mes_sidebar['hora_fin'] == '') | (df_mes_sidebar['hora_fin'] == 'None')]
+        
+        st.metric("Promedio Resolución", f"{mttr_side:.2f}h")
+        st.metric("Total Afectados", f"{cl_side} Usr")
+        if not fallas_act_side.empty:
+            st.error(f"🚨 {len(fallas_act_side)} Fallas Activas")
+        else:
+            st.success("✅ Red Estabilizada")
+    else:
+        st.info("Sin datos registrados.")
+
+df_mes = df_mes_sidebar
 
 # =====================================================================
 # [ETIQUETA: ESTRUCTURA DE PESTAÑAS (TABS)]
@@ -198,7 +219,6 @@ with tab1:
         st.divider()
         st.markdown("### 🗺️ Análisis Geoespacial y Causas")
         
-        # Mapa y Pastel en la misma fila para mejor uso del espacio
         col_m1, col_m2 = st.columns([3, 2])
         
         with col_m1:
@@ -241,8 +261,7 @@ with tab1:
             st.plotly_chart(fig_trend, use_container_width=True)
 
 # ---------------------------------------------------------------------
-# [ETIQUETA: TAB 2 - FORMULARIO DE REGISTRO CON PANEL DE CONTEXTO]
-# Se divide la pantalla. Izquierda: Formulario. Derecha: Historial reciente.
+# [ETIQUETA: TAB 2 - FORMULARIO INTELIGENTE Y DINÁMICO]
 # ---------------------------------------------------------------------
 with tab2:
     st.title("📝 Ingreso de Incidencias Operativas")
@@ -259,19 +278,30 @@ with tab2:
 
             st.divider()
             c_t1, c_t2 = st.columns(2)
+            
+            # MEJORA: Lógica dinámica para la fecha/hora de INICIO
             with c_t1:
                 f_i = st.date_input("📅 Fecha de Inicio")
-                if st.toggle("🕒 Asignar Hora de Inicio", value=True):
+                # Por defecto apagado (False)
+                asignar_hi = st.toggle("🕒 Asignar Hora de Inicio", value=False)
+                if asignar_hi:
                     h_i = st.time_input("Hora de Apertura")
                     hora_inicio_final = h_i.strftime("%H:%M:%S")
-                else: hora_inicio_final = None
+                else:
+                    hora_inicio_final = None
+                    st.info("ℹ️ Al no asignar hora de inicio, el sistema no calculará duración.")
 
+            # MEJORA: Lógica dinámica para la fecha/hora de CIERRE
             with c_t2:
                 f_f = st.date_input("📅 Fecha de Cierre")
-                if st.toggle("🕒 Asignar Hora de Cierre", value=True):
+                # Por defecto apagado (False)
+                asignar_hf = st.toggle("🕒 Asignar Hora de Cierre", value=False)
+                if asignar_hf:
                     h_f = st.time_input("Hora de Cierre")
                     final_h = h_f.strftime("%H:%M:%S")
-                else: final_h = None
+                else:
+                    final_h = None
+                    st.info("ℹ️ Al no asignar hora de cierre, la incidencia quedará como ACTIVA.")
 
             duracion = 0
             desc_conocimiento = "Total" if hora_inicio_final and final_h else "Parcial"
@@ -282,9 +312,20 @@ with tab2:
 
             st.divider()
             c_f1, c_f2 = st.columns(2)
-            clientes_form = 1 if categoria == "Cliente Corporativo" else c_f1.number_input("👤 Clientes Afectados", min_value=0, step=1)
-            causa = c_f2.selectbox("🛠️ Causa Raíz", list(causas_cortas.keys()))
-            desc = st.text_area("📝 Descripción Técnica")
+            
+            # MEJORA: Lógica dinámica para mostrar/ocultar selector de clientes
+            with c_f1:
+                if categoria == "Cliente Corporativo":
+                    clientes_form = 1
+                    # Mensaje azul confirmando que se asignó 1 cliente automático y no muestra el input numérico
+                    st.info("🏢 Segmento Corporativo: Se contabiliza 1 enlace afectado de forma automática.", icon="ℹ️")
+                else:
+                    clientes_form = st.number_input("👤 Clientes Afectados", min_value=0, step=1)
+
+            with c_f2:
+                causa = st.selectbox("🛠️ Causa Raíz", ["Corte de Fibra por Terceros", "Corte de Fibra (No Especificado)", "Caída de Árboles sobre Fibra", "Falla de Energía Comercial", "Corrosión en Equipos", "Daños por Fauna", "Falla de Hardware", "Falla de Configuración", "Falla de Redundancia", "Saturación de Tráfico", "Saturación en Servidor UNIFI", "Falla de Inicio en UNIFI", "Mantenimiento Programado", "Vandalismo o Hurto", "Condiciones Climáticas"])
+            
+            desc = st.text_area("📝 Descripción Técnica y Detallada del Incidente")
 
             if st.button("💾 Guardar Registro en Base de Datos", type="primary"):
                 try:
@@ -313,7 +354,6 @@ with tab2:
 
 # ---------------------------------------------------------------------
 # [ETIQUETA: TAB 3 - PANEL DE AUDITORÍA Y BASE DE DATOS]
-# Edición y eliminación en masa.
 # ---------------------------------------------------------------------
 with tab3:
     st.title("🗂️ Auditoría de Base de Datos")
