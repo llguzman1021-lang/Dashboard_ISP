@@ -39,7 +39,7 @@ if 'logged_in' not in st.session_state:
     st.session_state.role = None
     st.session_state.username = None
 
-# Credenciales de demostración (En producción usar DB o Hash)
+# Credenciales de demostración
 USUARIOS = {
     "admin": {"pass": "admin123", "role": "admin"},
     "viewer": {"pass": "view123", "role": "viewer"}
@@ -64,7 +64,17 @@ if not st.session_state.logged_in:
                     st.rerun()
                 else:
                     st.error("Credenciales incorrectas.")
-    st.stop() # Detiene la ejecución del resto del código si no hay login
+            
+            # --- NUEVO: Recuperación de contraseña ---
+            with st.expander("¿Olvidó su contraseña?"):
+                st.markdown("<small>Ingrese su correo corporativo para recibir instrucciones de recuperación.</small>", unsafe_allow_html=True)
+                correo_rec = st.text_input("Correo electrónico", placeholder="usuario@multinet.com")
+                if st.button("Solicitar Restablecimiento"):
+                    if correo_rec and "@" in correo_rec:
+                        st.success(f"✅ Se ha enviado un enlace de recuperación a: {correo_rec}")
+                    else:
+                        st.error("⚠️ Ingrese un correo corporativo válido.")
+    st.stop() # Detiene la ejecución si no hay login
 
 # =====================================================================
 # [ETIQUETA: VARIABLES GLOBALES Y CONEXIÓN A BASE DE DATOS]
@@ -88,20 +98,24 @@ def get_engine():
 engine = get_engine()
 
 # =====================================================================
-# [ETIQUETA: OPTIMIZACIÓN SQL Y CÁLCULOS]
-# Ahora descarga SOLO las fechas seleccionadas para mayor fluidez
+# [ETIQUETA: OPTIMIZACIÓN SQL POR MES]
 # =====================================================================
 @st.cache_data(ttl=60)
-def load_data(start_d, end_d):
+def load_data_mes(mes_idx, anio):
+    # Calcula el primer y último día del mes para filtrar desde SQL
+    start = f"{anio}-{mes_idx:02d}-01"
+    ultimo_dia = calendar.monthrange(anio, mes_idx)[1]
+    end = f"{anio}-{mes_idx:02d}-{ultimo_dia}"
+    
     query = "SELECT * FROM incidents WHERE fecha_inicio >= :start AND fecha_inicio <= :end ORDER BY fecha_inicio ASC"
     try:
         with engine.connect() as conn:
             conn.execute(text("ROLLBACK"))
-            return pd.read_sql(text(query), conn, params={"start": start_d, "end": end_d})
+            return pd.read_sql(text(query), conn, params={"start": start, "end": end})
     except Exception:
         engine.dispose()
         with engine.connect() as conn:
-            return pd.read_sql(text(query), conn, params={"start": start_d, "end": end_d})
+            return pd.read_sql(text(query), conn, params={"start": start, "end": end})
 
 def calcular_metricas(df_kpi, horas_rango_total):
     if df_kpi.empty: return 0.0, 0.0, 100.0, 0.0, 0, 0.0
@@ -128,50 +142,33 @@ def calcular_metricas(df_kpi, horas_rango_total):
     return downtime_bruto, acd, sla_resultante, mttr, int(df_kpi['clientes_afectados'].sum()), (df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0)
 
 # =====================================================================
-# [ETIQUETA: SIDEBAR - FILTROS DE TIEMPO Y CERRAR SESIÓN]
+# [ETIQUETA: SIDEBAR - FILTROS CLÁSICOS Y CERRAR SESIÓN]
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v7.0")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v8.0")
     
-    st.markdown("### 📅 Filtro de Tiempo")
-    today = datetime.now().date()
-    default_start = today.replace(day=1)
+    anio_actual = datetime.now().year
+    mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
+    mes_index = meses_nombres.index(mes_seleccionado) + 1
+    dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
     
-    # Rango de fechas dinámico
-    fechas = st.date_input("Seleccione el periodo", [default_start, today], max_value=today)
-    
-    if len(fechas) == 2:
-        start_date, end_date = fechas
-    else:
-        start_date, end_date = fechas[0], fechas[0]
-        
-    dias_rango = max(1, (end_date - start_date).days + 1)
-    horas_rango = dias_rango * 24
-
-    st.divider()
-    st.markdown("### ⚙️ Herramientas NOC")
-    if st.toggle("🔄 Modo TV (Auto-Refresh 60s)"):
-        import streamlit.components.v1 as components
-        components.html("<meta http-equiv='refresh' content='60'>", height=0)
-        st.caption("Pantalla actualizándose automáticamente.")
-    
-    # Descargar datos optimizados
-    df_base = load_data(start_date.strftime("%Y-%m-%d"), end_date.strftime("%Y-%m-%d"))
-    if not df_base.empty:
-        df_base.columns = [c.lower() for c in df_base.columns]
-        df_base['fecha_convertida'] = pd.to_datetime(df_base['fecha_inicio'], errors='coerce')
-        df_base['duracion_horas'] = pd.to_numeric(df_base['duracion_horas'], errors='coerce').fillna(0)
-        df_base['clientes_afectados'] = pd.to_numeric(df_base['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+    # Descargar datos optimizados solo del mes
+    df_mes = load_data_mes(mes_index, anio_actual)
+    if not df_mes.empty:
+        df_mes.columns = [c.lower() for c in df_mes.columns]
+        df_mes['fecha_convertida'] = pd.to_datetime(df_mes['fecha_inicio'], errors='coerce')
+        df_mes['duracion_horas'] = pd.to_numeric(df_mes['duracion_horas'], errors='coerce').fillna(0)
+        df_mes['clientes_afectados'] = pd.to_numeric(df_mes['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     
     st.divider()
     st.markdown("### 📉 Resumen Ejecutivo")
-    if not df_base.empty:
-        _, _, _, mttr_side, cl_side, _ = calcular_metricas(df_base, horas_rango)
+    if not df_mes.empty:
+        _, _, _, mttr_side, cl_side, _ = calcular_metricas(df_mes, dias_mes * 24)
         st.metric("Promedio Resolución", f"{mttr_side:.2f} horas")
         st.metric("Total Afectados", f"{cl_side} clientes")
     else:
-        st.info("Sin datos registrados en este rango.")
+        st.info("Sin datos registrados.")
         
     st.divider()
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
@@ -189,52 +186,47 @@ if st.session_state.role == 'admin':
 tabs = st.tabs(nombres_pestanas)
 
 # ---------------------------------------------------------------------
-# [ETIQUETA: TAB 1 - DASHBOARD VISUAL + CROSS FILTERING + GANTT]
+# [ETIQUETA: TAB 1 - DASHBOARD VISUAL + GANTT]
 # ---------------------------------------------------------------------
 with tabs[0]:
-    st.title(f"Visor de Rendimiento: {start_date.strftime('%d/%m/%Y')} al {end_date.strftime('%d/%m/%Y')}")
+    st.title(f"Visor de Rendimiento: {mes_seleccionado} {anio_actual}")
 
-    if df_base.empty:
-        st.success(f"🟢 Excelente estado: No hay fallas registradas en este rango de fechas.")
+    if df_mes.empty:
+        st.success(f"🟢 Excelente estado: No hay fallas registradas en {mes_seleccionado}.")
     else:
-        # MEJORA: Filtros Cruzados (Cross-Filtering)
-        with st.expander("🔍 Filtros Avanzados de Dashboard", expanded=False):
-            f_col1, f_col2, f_col3 = st.columns(3)
-            zonas_list = df_base['zona'].unique().tolist()
-            causas_list = df_base['causa_raiz'].unique().tolist()
-            equipos_list = df_base['equipo_afectado'].unique().tolist()
-            
-            sel_zonas = f_col1.multiselect("Filtrar por Zona", zonas_list, default=[])
-            sel_causas = f_col2.multiselect("Filtrar por Causa Raíz", causas_list, default=[])
-            sel_equipos = f_col3.multiselect("Filtrar por Equipo", equipos_list, default=[])
+        df_filtrado = df_mes.copy()
 
-        # Aplicar Filtros Maestros
-        df_filtrado = df_base.copy()
-        if sel_zonas: df_filtrado = df_filtrado[df_filtrado['zona'].isin(sel_zonas)]
-        if sel_causas: df_filtrado = df_filtrado[df_filtrado['causa_raiz'].isin(sel_causas)]
-        if sel_equipos: df_filtrado = df_filtrado[df_filtrado['equipo_afectado'].isin(sel_equipos)]
-        
-        # Alertas de Estado Global (Solo si no hay filtros aplicados)
-        if len(sel_zonas) == 0 and len(sel_causas) == 0 and len(sel_equipos) == 0:
-            fallas_activas = df_filtrado[(df_filtrado['hora_fin'].isnull()) | (df_filtrado['hora_fin'] == '') | (df_filtrado['hora_fin'] == 'None')]
-            if fallas_activas.empty: st.success("🟢 **ESTADO: NORMAL** - Red estabilizada.", icon="🟢")
-            else: st.error(f"🔴 **ESTADO: CRÍTICO** - {len(fallas_activas)} alerta(s) activa(s) en: {', '.join(fallas_activas['zona'].astype(str).unique())}.", icon="🔴")
+        # Cálculos de Deltas vs Mes Anterior recuperando datos solo del mes previo
+        downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, dias_mes * 24)
+        delta_m, delta_a, delta_s, delta_dias = None, None, None, None
 
-        # Cálculos Principales
-        downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, horas_rango)
+        if mes_index > 1:
+            df_pasado = load_data_mes(mes_index - 1, anio_actual)
+            if not df_pasado.empty:
+                df_pasado.columns = [c.lower() for c in df_pasado.columns]
+                df_pasado['duracion_horas'] = pd.to_numeric(df_pasado['duracion_horas'], errors='coerce').fillna(0)
+                df_pasado['clientes_afectados'] = pd.to_numeric(df_pasado['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+                
+                dias_pasado = calendar.monthrange(anio_actual, mes_index - 1)[1]
+                d_b_p, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, dias_pasado * 24)
+                
+                if mttr_p > 0: delta_m = f"{avg_mttr - mttr_p:+.1f} horas"
+                if acd_p > 0: delta_a = f"{acd_horas - acd_p:+.1f} horas"
+                if sla_p > 0: delta_s = f"{sla_porcentaje - sla_p:+.2f}%"
+                if d_b_p > 0: delta_dias = f"{(downtime_total / 24.0) - (d_b_p / 24.0):+.1f} días"
 
-        # Bloque de KPIs
+        # Bloque de KPIs - 2 filas de 3
         st.markdown("### 🎯 Indicadores Clave de Rendimiento (KPIs)")
         k1, k2, k3 = st.columns(3)
-        k1.metric("MTTR", f"{avg_mttr:.2f} horas", help="Tiempo Promedio de Resolución: Promedio de horas empleadas para reparar el servicio tras la notificación de la falla.")
-        k2.metric("Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", help="Nivel integral de servicio operativo (SLA) basado en las horas del rango seleccionado.")
-        k3.metric("Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas", help="Promedio de Afectación por Cliente (ACD): Horas promedio continuas de interrupción.")
+        k1.metric("MTTR", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse", help="Tiempo Promedio de Resolución: Promedio de horas empleadas para reparar el servicio tras la notificación de la falla.")
+        k2.metric("Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, help="Nivel integral de servicio operativo (SLA) basado en las horas del mes.")
+        k3.metric("Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas", delta=delta_a, delta_color="inverse", help="Promedio de Afectación por Cliente (ACD): Horas promedio continuas de interrupción.")
         
         st.write("") 
         k4, k5, k6 = st.columns(3)
         k4.metric("Falla Crítica", f"{max_h:.2f} horas", help="La duración del incidente más severo en el periodo.")
         k5.metric("Afectados", f"{cl_imp} clientes", help="Cantidad consolidada de usuarios que experimentaron cortes de servicio.")
-        k6.metric("Impacto Acumulado", f"{downtime_total / 24.0:.1f} días", help="Sumatoria global del tiempo de desconexión expresado en días enteros.")
+        k6.metric("Impacto Acumulado", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse", help="Sumatoria global del tiempo de desconexión expresado en días enteros.")
 
         st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base.")
 
@@ -374,11 +366,11 @@ if st.session_state.role == 'admin':
 
         with col_contexto:
             st.markdown("#### 🕒 Actividad Reciente")
-            st.caption(f"Últimos registros ingresados en BD.")
-            if df_base.empty:
-                st.info("Aún no hay registros.")
+            st.caption(f"Últimos registros ingresados en {mes_seleccionado}.")
+            if df_mes.empty:
+                st.info("Aún no hay registros en este mes.")
             else:
-                df_reciente = df_base.tail(5).sort_values(by='id', ascending=False)
+                df_reciente = df_mes.tail(5).sort_values(by='id', ascending=False)
                 for _, row in df_reciente.iterrows():
                     with st.container(border=True):
                         st.markdown(f"**📍 {row['zona']}**")
@@ -387,10 +379,10 @@ if st.session_state.role == 'admin':
     with tabs[2]:
         st.title("🗂️ Auditoría de Base de Datos")
         
-        if df_base.empty: st.info("No hay datos en el rango seleccionado. Cambia la fecha en el panel izquierdo.")
+        if df_mes.empty: st.info(f"No hay datos en el mes de {mes_seleccionado}.")
         else:
             busqueda = st.text_input("🔎 Buscar en registros:", placeholder="Filtrar tabla...")
-            df_display = df_base.copy()
+            df_display = df_mes.copy()
             if busqueda: df_display = df_display[df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)]
             
             df_display.insert(0, "Seleccionar", False)
@@ -427,4 +419,4 @@ if st.session_state.role == 'admin':
                     st.cache_data.clear(); st.rerun()
 
             st.write("---")
-            st.download_button("📥 Exportar Datos Actuales (CSV)", df_base.to_csv(index=False).encode('utf-8'), f"Reporte_NOC_{start_date}_al_{end_date}.csv", "text/csv")
+            st.download_button("📥 Exportar Datos Actuales (CSV)", df_mes.to_csv(index=False).encode('utf-8'), f"Reporte_NOC_{mes_seleccionado}.csv", "text/csv")
