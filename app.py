@@ -319,22 +319,7 @@ try:
 
         if not df_mes.empty:
             
-            # --- MOTOR DE FILTROS GLOBALES ---
-            with st.expander("🔎 Filtrar Datos Mostrados (Zonas, Equipos, Servicios...)", expanded=False):
-                col_f1, col_f2, col_f3 = st.columns(3)
-                
-                zonas_fijas = ["El Rosario", "La Costa del Sol", "La Libertad", "Rio Mar", "El Tunco", "Zaragoza", "Zacatecoluca", "San Salvador", "San Miguel Tepezontes", "ARG", "Santiago Nonualco"]
-                categorias_fijas = ["Red Multinet (Troncal)", "Cliente Corporativo"]
-                equipos_fijos = ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP", "Mufa", "Splitter", "Sistema UNIFI", "Antenas Ubiquiti"]
-                
-                f_zonas = col_f1.multiselect("Filtrar Zona Geográfica", options=zonas_fijas)
-                f_cats = col_f2.multiselect("Segmento Comercial", options=categorias_fijas)
-                f_eqs = col_f3.multiselect("Equipamiento Afectado", options=equipos_fijos)
-            
             df_filtrado = df_mes.copy()
-            if f_zonas: df_filtrado = df_filtrado[df_filtrado['Zona'].isin(f_zonas)]
-            if f_cats: df_filtrado = df_filtrado[df_filtrado['Categoria'].isin(f_cats)]
-            if f_eqs: df_filtrado = df_filtrado[df_filtrado[COL_EQUIPO].isin(f_eqs)]
 
             if df_filtrado.empty:
                 st.warning("⚠️ No existen fallas registradas que coincidan con los filtros seleccionados.")
@@ -356,9 +341,6 @@ try:
                     dias_pasado = calendar.monthrange(anio_actual, mes_index - 1)[1]
                     
                     df_pasado = df_total[df_total['Mes_Nombre'] == mes_pasado_nom].copy()
-                    if f_zonas: df_pasado = df_pasado[df_pasado['Zona'].isin(f_zonas)]
-                    if f_cats: df_pasado = df_pasado[df_pasado['Categoria'].isin(f_cats)]
-                    if f_eqs: df_pasado = df_pasado[df_pasado[COL_EQUIPO].isin(f_eqs)]
                     
                     if not df_pasado.empty:
                         d_b_p, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, dias_pasado * 24)
