@@ -269,8 +269,7 @@ try:
     df_total.columns = [c.lower() for c in df_total.columns]
 
     # Convertir fecha_inicio a datetime para filtros por mes
-    df_total['fecha_inicio'] = df_total['fecha_inicio'].astype(str).str.strip()
-    df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], dayfirst=True, format='mixed', errors='coerce')
+    df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], dayfirst=True, errors='coerce')
     df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(
         lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None
     )
@@ -354,19 +353,7 @@ try:
             "Mantenimiento Programado": "Mantenimiento",
             "Vandalismo o Hurto": "Vandalismo",
             "Condiciones Climáticas": "Clima",
-            "No Especificado": "N/E",
-            "Corte Fibra (N/E)": "Fibra",
-            "Corte (Terceros)": "Terceros",
-            "Corte Eléctrico": "Energía",
-            "Caída Árboles": "Árboles",
-            "Disco Lleno (UNIFI)": "UNIFI",
-            "Falla Inicio (UNIFI)": "UNIFI",
-            "Mantenimiento": "Mantenimiento",
-            "Configuración": "Configuración",
-            "Redundancia": "Redundancia",
-            "Hardware": "Hardware",
-            "Fauna": "Fauna",
-            "Saturación": "Saturación"
+            "No Especificado": "N/E"
         }
 
         df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
@@ -464,9 +451,8 @@ try:
 
         df_display.insert(0, "Seleccionar", False)
 
-        conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Solo Fecha)",
-                           "Parcial (Falta Hora Cierre)", "Parcial (Falta Hora Inicio)",
-                           "Parcial (Solo Hora)", "Ninguno"]
+        conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Falta Hora Cierre)",
+                           "Parcial (Falta Hora Inicio)", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
         servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
 
         cols_to_drop = [c for c in ['fecha_convertida', 'mes_nombre'] if c in df_display.columns]
