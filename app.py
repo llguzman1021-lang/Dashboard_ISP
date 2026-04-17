@@ -16,7 +16,12 @@ st.set_page_config(
 # --- CONEXIÓN SEGURA A NEON ---
 @st.cache_resource
 def get_engine():
-    return create_engine(st.secrets["neon_dsn"])
+    return create_engine(
+        st.secrets["neon_dsn"],
+        pool_pre_ping=True,          # verifica conexión antes de usarla
+        pool_recycle=300,            # recicla conexiones cada 5 min
+        connect_args={"connect_timeout": 10}
+    )
 
 engine = get_engine()
 
@@ -24,9 +29,17 @@ engine = get_engine()
 @st.cache_data(ttl=300)
 def load_data():
     query = "SELECT * FROM incidents ORDER BY id ASC"
-    with engine.connect() as conn:
-        df = pd.read_sql(query, conn)
-    return df
+    try:
+        with engine.connect() as conn:
+            conn.execute(text("ROLLBACK"))   # limpia cualquier tx colgada
+            df = pd.read_sql(text(query), conn)
+        return df
+    except Exception:
+        # Si falla, invalida el engine cacheado y reintenta con conexión fresca
+        engine.dispose()
+        with engine.connect() as conn:
+            df = pd.read_sql(text(query), conn)
+        return df
 
 # --- MOTOR DE CÁLCULOS KPI's ESTRATÉGICOS ---
 def calcular_metricas(df_kpi, horas_mes_total):
