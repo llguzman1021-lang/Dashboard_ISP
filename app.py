@@ -1,19 +1,20 @@
+```python
 import streamlit as st
 import pandas as pd
-from sqlalchemy import create_engine, text
 import plotly.express as px
+from sqlalchemy import create_engine, text
 from datetime import datetime
 import calendar
 import time
 
-# --- CONFIGURACIÓN DE PÁGINA ---
+# ---------------- CONFIGURACIÓN GENERAL ----------------
 st.set_page_config(
     page_title="Multinet NOC Analytics | Enterprise Operations",
     layout="wide",
     page_icon="🌐"
 )
 
-# --- CONEXIÓN SEGURA A NEON ---
+# ---------------- CONEXIÓN A NEON ----------------
 @st.cache_resource
 def get_engine():
     return create_engine(
@@ -25,47 +26,27 @@ def get_engine():
 
 engine = get_engine()
 
-# --- CARGA DE DATOS DESDE NEON ---
+# ---------------- CARGA DE DATOS ----------------
 @st.cache_data(ttl=300)
 def load_data():
     query = "SELECT * FROM incidents ORDER BY id ASC"
-    try:
-        with engine.connect() as conn:
-            conn.execute(text("ROLLBACK"))
-            df = pd.read_sql(text(query), conn)
-    except Exception:
-        engine.dispose()
-        with engine.connect() as conn:
-            df = pd.read_sql(text(query), conn)
+    with engine.connect() as conn:
+        df = pd.read_sql(text(query), conn)
 
-    # Normalización robusta de fechas y horas
+    # Normalización de tipos esperados desde Neon (DATE/TIME)
     if "fecha_inicio" in df.columns:
-        df["fecha_inicio"] = pd.to_datetime(
-            df["fecha_inicio"].astype(str)
-                .str.replace("-", "/", regex=False)
-                .str.replace(".", "/", regex=False),
-            dayfirst=True,
-            errors="coerce"
-        ).dt.strftime("%d/%m/%Y")
-
+        df["fecha_inicio"] = pd.to_datetime(df["fecha_inicio"], errors="coerce").dt.strftime("%d/%m/%Y")
     if "fecha_fin" in df.columns:
-        df["fecha_fin"] = pd.to_datetime(
-            df["fecha_fin"].astype(str)
-                .str.replace("-", "/", regex=False)
-                .str.replace(".", "/", regex=False),
-            dayfirst=True,
-            errors="coerce"
-        ).dt.strftime("%d/%m/%Y")
+        df["fecha_fin"] = pd.to_datetime(df["fecha_fin"], errors="coerce").dt.strftime("%d/%m/%Y")
 
     if "hora_inicio" in df.columns:
         df["hora_inicio"] = df["hora_inicio"].astype(str)
-
     if "hora_fin" in df.columns:
         df["hora_fin"] = df["hora_fin"].astype(str)
 
     return df
 
-# --- MOTOR DE CÁLCULOS KPI's ---
+# ---------------- FUNCIÓN DE MÉTRICAS ----------------
 def calcular_metricas(df_kpi, horas_mes_total):
     if df_kpi.empty:
         return 0.0, 0.0, 100.0, 0.0, 0, 0.0
@@ -91,14 +72,14 @@ def calcular_metricas(df_kpi, horas_mes_total):
         )
         m = s.notna() & e.notna() & (s <= e)
         if m.any():
-            i = sorted(list(zip(s[m].tolist(), e[m].tolist())), key=lambda x: x[0])
-            mg = [list(i[0])]
-            for c in i[1:]:
-                if c[0] <= mg[-1][1]:
-                    mg[-1][1] = max(mg[-1][1], c[1])
+            intervalos = sorted(list(zip(s[m].tolist(), e[m].tolist())), key=lambda x: x[0])
+            merged = [list(intervalos[0])]
+            for current in intervalos[1:]:
+                if current[0] <= merged[-1][1]:
+                    merged[-1][1] = max(merged[-1][1], current[1])
                 else:
-                    mg.append(list(c))
-            tiempo_real = sum((end - stp).total_seconds() for stp, end in mg) / 3600.0
+                    merged.append(list(current))
+            tiempo_real = sum((fin - ini).total_seconds() for ini, fin in merged) / 3600.0
 
     sla_resultante = max(0.0, min(100.0, ((horas_mes_total - tiempo_real) / horas_mes_total) * 100))
     mttr = df_kpi[df_kpi['duracion_horas'] > 0]['duracion_horas'].mean() if not df_kpi[df_kpi['duracion_horas'] > 0].empty else 0.0
@@ -107,7 +88,7 @@ def calcular_metricas(df_kpi, horas_mes_total):
 
     return downtime_bruto, acd, sla_resultante, mttr, clientes, max_downt
 
-# --- ESTILOS ---
+# ---------------- ESTILOS ----------------
 st.markdown("""
 <style>
 div.stButton > button:first-child {
@@ -138,7 +119,7 @@ div.stButton > button:first-child:hover {
 meses_nombres = ["Enero","Febrero","Marzo","Abril","Mayo","Junio",
                  "Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
-# --- SIDEBAR ---
+# ---------------- SIDEBAR: FORMULARIO ----------------
 with st.sidebar:
     st.title("🏢 Centro de Operaciones de Red (NOC)")
     st.caption("Panel de Control Gerencial Multinet | v3.3")
@@ -170,9 +151,10 @@ with st.sidebar:
 
     if conoce_h_i == "Sí":
         h_i = c2.time_input("🕒 Hora de Apertura")
-        hora_inicio_final = h_i.strftime("%H:%M:%S")
+        hora_inicio_final = h_i
     else:
-        hora_inicio_final = "N/A"
+        h_i = None
+        hora_inicio_final = None
 
     st.write("---")
     st.write("✅ **Registro de Tiempos: Resolución y Cierre**")
@@ -183,11 +165,12 @@ with st.sidebar:
 
     if conoce_h_f == "Sí":
         h_f = c_c2.time_input("🕒 Hora de Cierre")
-        final_h = h_f.strftime("%H:%M:%S")
+        hora_fin_final = h_f
     else:
-        final_h = "N/A"
+        h_f = None
+        hora_fin_final = None
 
-    duracion = 0
+    duracion = 0.0
     if conoce_h_i == "Sí" and conoce_h_f == "Sí":
         desc_conocimiento = "Total"
         try:
@@ -195,9 +178,9 @@ with st.sidebar:
             dt_f = datetime.combine(f_f, h_f)
             duracion = round((dt_f - dt_i).total_seconds() / 3600, 2)
             if duracion < 0:
-                duracion = 0
+                duracion = 0.0
         except:
-            duracion = 0
+            duracion = 0.0
     elif conoce_h_i == "No" and conoce_h_f == "No":
         desc_conocimiento = "Parcial (Solo Fechas)"
     elif conoce_h_i == "Sí" and conoce_h_f == "No":
@@ -216,7 +199,8 @@ with st.sidebar:
         "Corrosión en Equipos","Daños por Fauna","Falla de Hardware",
         "Falla de Configuración","Falla de Redundancia","Saturación de Tráfico",
         "Saturación en Servidor UNIFI","Falla de Inicio en UNIFI",
-        "Mantenimiento Programado","Vandalismo o Hurto","Condiciones Climáticas"
+        "Mantenimiento Programado","Vandalismo o Hurto","Condiciones Climáticas",
+        "No Especificado"
     ])
 
     desc = st.text_area("📝 Descripción Técnica y Detallada del Incidente")
@@ -244,10 +228,10 @@ with st.sidebar:
                     "servicio": servicio,
                     "categoria": categoria,
                     "equipo": equipo,
-                    "fecha_inicio": f_i.strftime("%d/%m/%Y"),
-                    "hora_inicio": hora_inicio_final,
-                    "fecha_fin": f_f.strftime("%d/%m/%Y"),
-                    "hora_fin": final_h,
+                    "fecha_inicio": f_i,          # DATE en Neon
+                    "hora_inicio": hora_inicio_final,  # TIME en Neon (o NULL)
+                    "fecha_fin": f_f,
+                    "hora_fin": hora_fin_final,
                     "clientes": int(clientes_form),
                     "causa": causa,
                     "descripcion": desc,
@@ -261,7 +245,7 @@ with st.sidebar:
         except Exception as e:
             st.error(f"Error al guardar: {e}")
 
-# --- PROCESAMIENTO ---
+# ---------------- PROCESAMIENTO PRINCIPAL ----------------
 try:
     df_total = load_data()
 
@@ -271,6 +255,7 @@ try:
 
     df_total.columns = [c.lower() for c in df_total.columns]
 
+    # Conversión robusta de fecha_inicio a datetime para análisis
     df_total['fecha_convertida'] = pd.to_datetime(
         df_total['fecha_inicio'].astype(str)
             .str.replace("-", "/", regex=False)
@@ -283,7 +268,7 @@ try:
         lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None
     )
 
-    df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
+    df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0.0)
     df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
 
     df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy()
@@ -301,22 +286,53 @@ try:
         downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, horas_totales_mes)
         dias_totales = downtime_total / 24.0
 
-        # KPIs
+        # --- COMPARATIVA CON MES ANTERIOR ---
+        delta_m = None
+        delta_a = None
+        delta_s = None
+        delta_dias = None
+
+        if mes_index > 1:
+            mes_pasado_nom = meses_nombres[mes_index - 2]
+            dias_pasado = calendar.monthrange(anio_actual, mes_index - 1)[1]
+            df_pasado = df_total[df_total['mes_nombre'] == mes_pasado_nom].copy()
+
+            if not df_pasado.empty:
+                d_b_p, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, dias_pasado * 24)
+                if mttr_p > 0:
+                    delta_m = f"{avg_mttr - mttr_p:+.1f} horas"
+                if acd_p > 0:
+                    delta_a = f"{acd_horas - acd_p:+.1f} horas"
+                if sla_p > 0:
+                    delta_s = f"{sla_porcentaje - sla_p:+.2f}%"
+                if d_b_p > 0:
+                    dias_p = d_b_p / 24.0
+                    delta_dias = f"{dias_totales - dias_p:+.1f} días"
+
+        # --- KPIs ---
         st.write("---")
         k1, k2, k3 = st.columns(3)
-        k1.metric("⏱️ MTTR", f"{avg_mttr:.2f} h")
-        k2.metric("👥 Clientes Afectados", f"{cl_imp}")
-        k3.metric("⏳ Impacto", f"{dias_totales:.2f} días")
+        k1.metric("⏱️ Tiempo Promedio de Resolución (MTTR)", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse",
+                  help="Promedio de horas empleadas para reparar el servicio tras la notificación de la falla.")
+        k2.metric("👥 Total de Clientes Interrumpidos", f"{cl_imp} clientes",
+                  help="Cantidad consolidada de usuarios que experimentaron cortes de servicio.")
+        k3.metric("⏳ Impacto Operativo Acumulado", f"{dias_totales:.2f} días", delta=delta_dias, delta_color="inverse",
+                  help="Sumatoria global del tiempo de desconexión expresado en la equivalencia de días enteros.")
 
         st.write("")
         k4, k5, k6 = st.columns(3)
-        k4.metric("🛑 Falla Más Larga", f"{max_h:.2f} h")
-        k5.metric("📈 SLA", f"{sla_porcentaje:.2f}%")
-        k6.metric("📉 ACD", f"{acd_horas:.2f} h/cliente")
+        k4.metric("🛑 Duración de la Falla Más Crítica", f"{max_h:.2f} horas",
+                  help="La duración en horas del incidente más severo y prolongado registrado en este periodo mensual.")
+        k5.metric("📈 Porcentaje de Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, delta_color="normal",
+                  help="Nivel integral de servicio operativo (SLA) basado en las horas del mes.")
+        k6.metric("📉 Promedio de Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas / cliente", delta=delta_a, delta_color="inverse",
+                  help="Promedio estadístico de horas continuas en las que un cliente experimentó interrupción de servicio.")
 
-        # GRÁFICAS
+        st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base para no alterar los promedios.")
+
+        # --- GRÁFICAS ---
         st.divider()
-        st.subheader("📈 Análisis Visual")
+        st.subheader("📈 Análisis Visual del Rendimiento Operativo")
 
         col_g1, col_g2 = st.columns(2)
 
@@ -328,35 +344,59 @@ try:
             "Corrosión en Equipos": "Corrosión",
             "Daños por Fauna": "Fauna",
             "Falla de Hardware": "Hardware",
-            "Falla de Configuración": "Config",
+            "Falla de Configuración": "Configuración",
             "Falla de Redundancia": "Redundancia",
             "Saturación de Tráfico": "Saturación",
-            "Saturación en Servidor UNIFI": "Sat UNIFI",
-            "Falla de Inicio en UNIFI": "Inicio UNIFI",
+            "Saturación en Servidor UNIFI": "Sat. UNIFI",
+            "Falla de Inicio en UNIFI": "Inic. UNIFI",
             "Mantenimiento Programado": "Mantenimiento",
             "Vandalismo o Hurto": "Vandalismo",
-            "Condiciones Climáticas": "Clima"
+            "Condiciones Climáticas": "Clima",
+            "No Especificado": "N/E"
         }
 
         df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
-        df_caus['Causa_Corta'] = df_caus['causa_raiz'].map(lambda x: causas_cortas.get(x, x))
+        df_caus['Causa_Corta'] = df_caus['causa_raiz'].map(lambda x: causas_cortas.get(x, str(x).split()[0]))
 
-        fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.5, template="plotly_dark")
+        fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.5,
+                         title="🔍 <b>Causas Principales de las Fallas Registradas</b>", template="plotly_dark")
+        fig_rca.update_traces(textposition='inside', textinfo='percent+label',
+                              marker=dict(line=dict(color='#000000', width=1)))
+        fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0))
         col_g1.plotly_chart(fig_rca, use_container_width=True)
 
-        df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos')
-        fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', template="plotly_dark")
+        df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
+        fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', color='Fallos',
+                        title="🛠️ <b>Fallas Acumuladas por Tipo de Equipamiento</b>", template="plotly_dark",
+                        color_continuous_scale="Reds")
+        fig_eq.update_layout(coloraxis_showscale=False, margin=dict(l=0, r=0, t=60, b=0),
+                             xaxis_title="Cantidad de Eventos (Fallas)", yaxis_title="")
         col_g2.plotly_chart(fig_eq, use_container_width=True)
 
         st.write("")
         col_g3, col_g4 = st.columns(2)
 
         df_serv = df_filtrado.groupby('servicio').size().reset_index(name='Total_Eventos')
-        fig_serv = px.bar(df_serv, x='Total_Eventos', y='servicio', orientation='h', template="plotly_dark")
-        col_g3.plotly_chart(fig_serv, use_container_width=True)
+        fig_serv_kpi = px.bar(df_serv, x='Total_Eventos', y='servicio', orientation='h',
+                              title="🌐 <b>Volumen de Incidencias según el Servicio</b>",
+                              text_auto=True, template="plotly_dark", color='servicio',
+                              color_discrete_sequence=['#0068c9', '#ff9f43', '#27ae60'])
+        fig_serv_kpi.update_layout(showlegend=False, margin=dict(l=0, r=0, t=60, b=0),
+                                   xaxis_title="Total de Caídas Registradas", yaxis_title="")
+        fig_serv_kpi.update_traces(textposition='inside', textfont_size=14, marker_line_width=0)
+        col_g3.plotly_chart(fig_serv_kpi, use_container_width=True)
 
         top_zonas = df_filtrado.groupby('zona')['duracion_horas'].sum().nlargest(5).reset_index()
-        fig_bar_zonas = px.bar(top_zonas, x='duracion_horas', y='zona', orientation='h', template="plotly_dark")
+        top_zonas.columns = ['Zona', 'Horas Offline']
+        top_zonas['Etiqueta'] = top_zonas['Horas Offline'].apply(lambda x: f"{x:.2f} horas")
+        fig_bar_zonas = px.bar(top_zonas, x='Horas Offline', y='Zona', orientation='h',
+                               title="📉 <b>Impacto por Zona (Horas sin Servicio)</b>",
+                               text='Etiqueta', template="plotly_dark", color='Horas Offline',
+                               color_continuous_scale='Blues')
+        fig_bar_zonas.update_layout(coloraxis_showscale=False, yaxis={'categoryorder': 'total ascending'},
+                                    margin=dict(l=0, r=0, t=60, b=0),
+                                    xaxis_title="Total de Horas sin Servicio", yaxis_title="")
+        fig_bar_zonas.update_traces(marker_line_width=0, textfont_size=13, textposition='inside')
         col_g4.plotly_chart(fig_bar_zonas, use_container_width=True)
 
         # Matriz de Riesgo
@@ -367,8 +407,195 @@ try:
             Afect_Totales=('clientes_afectados', 'sum')
         ).reset_index()
 
-        if not df_riesgo.empty:
-            fig_sc = px.scatter(df_riesgo, x='Frecuencia', y='Horas_Down', size='Afect_Totales', color='zona', template="plotly_dark")
+        if not df_riesgo.empty and df_riesgo['Afect_Totales'].sum() > 0:
+            fig_sc = px.scatter(df_riesgo, x='Frecuencia', y='Horas_Down', size='Afect_Totales', color='zona',
+                                title="📍 <b>Matriz de Riesgo: Desempeño Crítico por Zonas de Cobertura</b><br>"
+                                      "<sup>Nodos en el eje superior presentan tiempos de resolución prolongados. "
+                                      "Nodos hacia la derecha sufren fallas recurrentes. "
+                                      "El radio del círculo representa el volumen de clientes afectados.</sup>",
+                                labels={'Frecuencia': 'Cantidad de Fallas Registradas',
+                                        'Horas_Down': 'Horas Totales Caídas (Acumulado)'},
+                                template="plotly_dark")
+            fig_sc.update_layout(margin=dict(l=0, r=0, t=70, b=0), showlegend=True)
             st.plotly_chart(fig_sc, use_container_width=True)
 
-        # Tendencia diaria
+        # Tendencia Diaria
+        st.write("")
+        df_trend = df_filtrado.groupby('fecha_convertida').size().reset_index(name='Total_Eventos')
+        fig_trend = px.area(df_trend, x='fecha_convertida', y='Total_Eventos',
+                            title="📅 <b>Tendencia Diaria de Cortes Operativos</b><br>"
+                                  "<sup>Muestra la fluctuación y volumen de las incidencias registradas día a día durante este ciclo.</sup>",
+                            labels={'fecha_convertida': 'Fechas del Mes', 'Total_Eventos': 'Cantidad Total de Fallas'},
+                            template="plotly_dark")
+        fig_trend.update_traces(line_color='#0068c9', fillcolor='rgba(0, 104, 201, 0.2)')
+        st.plotly_chart(fig_trend, use_container_width=True)
+
+        # --- BITÁCORA INTELIGENTE PROTEGIDA ---
+        st.divider()
+        st.subheader("🔐 Panel de Auditoría y Mantenimiento de Datos")
+
+        col_a1, col_a2 = st.columns([3, 2])
+        busqueda = col_a1.text_input("🔎 Búsqueda de Registros:",
+                                     placeholder="Escriba aquí para ubicar detalles técnicos o zonas geográficas...")
+        pin_seguridad = col_a2.text_input("🔑 Ingreso de PIN Restringido:", type="password",
+                                          placeholder="Credencial de Administrador (Necesario para Editar o Eliminar)")
+
+        acceso_autorizado = (pin_seguridad == "1010")
+
+        df_display = df_filtrado.copy()
+
+        if busqueda:
+            mask = df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)
+            df_display = df_display[mask]
+
+        df_display.insert(0, "Seleccionar", False)
+
+        conoce_opciones = ["Total", "Parcial (Solo Fechas)", "Parcial (Falta Hora Cierre)",
+                           "Parcial (Falta Hora Inicio)", "Parcial (Solo Fecha)", "Parcial (Solo Hora)", "Ninguno"]
+        servicio_opciones = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
+
+        cols_to_drop = [c for c in ['fecha_convertida', 'mes_nombre'] if c in df_display.columns]
+
+        edited_df = st.data_editor(
+            df_display.drop(columns=cols_to_drop),
+            column_config={
+                "Seleccionar": st.column_config.CheckboxColumn("Sel", default=False),
+                "id": None,
+                "worksheet_name": None,
+                "gsheet_id": None,
+                "servicio": st.column_config.SelectboxColumn("Servicio", options=servicio_opciones, required=True),
+                "fecha_inicio": st.column_config.DateColumn("F. Inicio", format="DD/MM/YYYY"),
+                "hora_inicio": st.column_config.TimeColumn("H. Inicio"),
+                "fecha_fin": st.column_config.DateColumn("F. Cierre", format="DD/MM/YYYY"),
+                "hora_fin": st.column_config.TimeColumn("H. Cierre"),
+                "duracion_horas": st.column_config.NumberColumn("Duración (Horas)", disabled=True, format="%.2f"),
+                "conocimiento_tiempos": st.column_config.SelectboxColumn(
+                    "Nivel de Precisión del Registro", options=conoce_opciones, required=True)
+            },
+            use_container_width=True, hide_index=True, num_rows="fixed", key="main_editor"
+        )
+
+        filas_para_eliminar = edited_df[edited_df["Seleccionar"] == True]
+        original_data = df_display.drop(columns=cols_to_drop + ['Seleccionar'])
+        edited_data = edited_df.drop(columns=['Seleccionar'])
+        hay_cambios = not original_data.reset_index(drop=True).equals(edited_data.reset_index(drop=True))
+
+        if not filas_para_eliminar.empty or hay_cambios:
+            if acceso_autorizado:
+                if not filas_para_eliminar.empty:
+                    if st.button(f"🗑️ Eliminar Definitivamente ({len(filas_para_eliminar)}) Registros Seleccionados"):
+                        ids_eliminar = filas_para_eliminar['id'].tolist()
+                        try:
+                            with engine.begin() as conn:
+                                for rid in ids_eliminar:
+                                    conn.execute(text("DELETE FROM incidents WHERE id = :id"), {"id": rid})
+                            st.success("✅ Los registros han sido destruidos de forma segura.")
+                            time.sleep(1)
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al eliminar: {e}")
+
+                if hay_cambios:
+                    if st.button("💾 Guardar Modificaciones y Recalcular Métricas Automáticamente"):
+                        try:
+                            with engine.begin() as conn:
+                                for i in range(len(original_data)):
+                                    orig_row = original_data.iloc[i]
+                                    edit_row = edited_data.iloc[i]
+                                    if not orig_row.equals(edit_row):
+                                        f_i_v = edit_row.get('fecha_inicio', None)
+                                        h_i_v = edit_row.get('hora_inicio', None)
+                                        f_f_v = edit_row.get('fecha_fin', None)
+                                        h_f_v = edit_row.get('hora_fin', None)
+                                        conoce_s = str(edit_row.get('conocimiento_tiempos', ''))
+
+                                        dur_r = 0.0
+                                        try:
+                                            if conoce_s == "Total" and h_i_v is not None and h_f_v is not None:
+                                                dt_ini = datetime.combine(f_i_v, h_i_v)
+                                                dt_fin = datetime.combine(f_f_v, h_f_v)
+                                                dur_r = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
+                                                if dur_r < 0:
+                                                    dur_r = 0.0
+                                        except:
+                                            dur_r = 0.0
+
+                                        row_id = edit_row.get('id') or orig_row.get('id')
+                                        conn.execute(text("""
+                                            UPDATE incidents SET
+                                                zona = :zona,
+                                                servicio = :servicio,
+                                                categoria = :categoria,
+                                                equipo_afectado = :equipo,
+                                                fecha_inicio = :fecha_inicio,
+                                                hora_inicio = :hora_inicio,
+                                                fecha_fin = :fecha_fin,
+                                                hora_fin = :hora_fin,
+                                                clientes_afectados = :clientes,
+                                                causa_raiz = :causa,
+                                                descripcion = :descripcion,
+                                                duracion_horas = :duracion,
+                                                conocimiento_tiempos = :conocimiento
+                                            WHERE id = :id
+                                        """), {
+                                            "zona": edit_row.get('zona', ''),
+                                            "servicio": edit_row.get('servicio', ''),
+                                            "categoria": edit_row.get('categoria', ''),
+                                            "equipo": edit_row.get('equipo_afectado', ''),
+                                            "fecha_inicio": f_i_v,
+                                            "hora_inicio": h_i_v,
+                                            "fecha_fin": f_f_v,
+                                            "hora_fin": h_f_v,
+                                            "clientes": int(edit_row.get('clientes_afectados', 0)),
+                                            "causa": edit_row.get('causa_raiz', ''),
+                                            "descripcion": edit_row.get('descripcion', ''),
+                                            "duracion": dur_r,
+                                            "conocimiento": conoce_s,
+                                            "id": row_id
+                                        })
+                            st.success("✅ Modificaciones integradas exitosamente en la base de datos principal.")
+                            time.sleep(1)
+                            st.cache_data.clear()
+                            st.rerun()
+                        except Exception as e:
+                            st.error(f"Error al guardar modificaciones: {e}")
+            else:
+                st.error("🛑 Operación Restringida: Ingrese el PIN de credencial de administrador para validar estas acciones.")
+
+        # --- Exportación Final ---
+        st.write("---")
+        export_cols = [c for c in df_filtrado.columns if c not in ['fecha_convertida', 'mes_nombre', 'id', 'gsheet_id', 'worksheet_name']]
+        csv_m = df_filtrado[export_cols].to_csv(index=False).encode('utf-8')
+        st.download_button("📥 Exportar Análisis del Mes a formato Excel (CSV)", data=csv_m,
+                           file_name="Reporte_Directivo_NOC.csv", mime='text/csv')
+
+    else:
+        st.info(f"🟢 Excelente estado operativo: No se detectan fallas mayores registradas para el ciclo mensual de {mes_seleccionado}.")
+
+    # --- ARCHIVO HISTÓRICO MASIVO ---
+    st.divider()
+    st.header("📂 Histórico Consolidado de Datos Operativos (Mensual)")
+    st.markdown("A continuación se presenta un desglose de los datos históricos mes a mes registrados en el sistema. Despliegue cualquier sección para auditar incidentes pasados.")
+
+    meses_con_datos = [m for m in meses_nombres if m in df_total['mes_nombre'].unique()]
+    otros_meses = [m for m in meses_con_datos if m != mes_seleccionado]
+
+    if otros_meses:
+        for mes in otros_meses:
+            with st.expander(f"📁 Consultar Registro Histórico Completo: {mes}"):
+                export_cols_h = [c for c in df_total.columns if c not in ['fecha_convertida', 'mes_nombre', 'id', 'gsheet_id', 'worksheet_name']]
+                df_hist = df_total[df_total['mes_nombre'] == mes][export_cols_h]
+                st.dataframe(df_hist, use_container_width=True, hide_index=True)
+                csv_h = df_hist.to_csv(index=False).encode('utf-8')
+                st.download_button(
+                    label=f"📥 Descargar Resumen Excel ({mes})",
+                    data=csv_h,
+                    file_name=f"Auditoria_Historica_NOC_{mes}.csv",
+                    mime='text/csv',
+                    key=f"btn_{mes}"
+                )
+
+except Exception as e:
+    st.error(f"⚠️ Error Interno del Motor de Procesamiento de Datos: {e}")
+```
