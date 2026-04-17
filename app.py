@@ -29,6 +29,9 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #0068c9 !important; border-color: #0068c9 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0px !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
+    
+    /* Centrar login */
+    .login-box { max-width: 400px; margin: auto; padding: 30px; background-color: #1e1e2f; border-radius: 15px; border: 1px solid #333; text-align: center;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -50,10 +53,8 @@ def check_password(password, hashed):
 # Inicializar Usuarios y Tablas por defecto si no existen
 def init_db():
     with engine.begin() as conn:
-        # Verificar si la tabla users tiene datos
         res = conn.execute(text("SELECT count(*) FROM users")).scalar()
         if res == 0:
-            # Crear admin y viewer por defecto
             admin_hash = hash_password("admin123")
             view_hash = hash_password("view123")
             conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('admin', :hash1, 'admin', '¿Color favorito?', 'azul')"), {"hash1": admin_hash})
@@ -158,7 +159,7 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
     return pdf.output(dest='S').encode('latin-1')
 
 # =====================================================================
-# [ETIQUETA: VARIABLES GLOBALES Y CARGA OPTIMIZADA]
+# [ETIQUETA: VARIABLES GLOBALES Y CARGA DE DATOS]
 # =====================================================================
 PALETA_CORP = ['#0068c9', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b', '#7defa1']
 meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
@@ -173,17 +174,16 @@ COORDS_ZONAS = {
 COORD_DEFAULT = {"lat": 13.6929, "lon": -89.2182}
 
 @st.cache_data(ttl=60)
-def load_data_mes(mes_idx, anio):
-    start = f"{anio}-{mes_idx:02d}-01"
-    ultimo_dia = calendar.monthrange(anio, mes_idx)[1]
-    end = f"{anio}-{mes_idx:02d}-{ultimo_dia}"
-    query = "SELECT * FROM incidents WHERE fecha_inicio >= :start AND fecha_inicio <= :end ORDER BY fecha_inicio ASC"
+def load_data():
+    query = "SELECT * FROM incidents ORDER BY id ASC"
     try:
         with engine.connect() as conn:
             conn.execute(text("ROLLBACK"))
-            return pd.read_sql(text(query), conn, params={"start": start, "end": end})
+            return pd.read_sql(text(query), conn)
     except Exception:
-        return pd.DataFrame()
+        engine.dispose()
+        with engine.connect() as conn:
+            return pd.read_sql(text(query), conn)
 
 def calcular_metricas(df_kpi, horas_rango_total):
     if df_kpi.empty: return 0.0, 0.0, 100.0, 0.0, 0, 0.0
@@ -209,24 +209,33 @@ def calcular_metricas(df_kpi, horas_rango_total):
     mttr = df_kpi[df_kpi['duracion_horas'] > 0]['duracion_horas'].mean() if not df_kpi[df_kpi['duracion_horas'] > 0].empty else 0.0
     return downtime_bruto, acd, sla_resultante, mttr, int(df_kpi['clientes_afectados'].sum()), (df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0)
 
+# Procesamiento General
+df_total = pd.DataFrame()
+try:
+    df_total = load_data()
+    if not df_total.empty:
+        df_total.columns = [c.lower() for c in df_total.columns]
+        df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], errors='coerce')
+        df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None)
+        df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
+        df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+except Exception as e:
+    st.error(f"⚠️ Error BD: {e}")
+
 # =====================================================================
-# [ETIQUETA: SIDEBAR]
+# [ETIQUETA: SIDEBAR Y FILTRO MENSUAL]
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.0")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.1")
     
     anio_actual = datetime.now().year
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
     mes_index = meses_nombres.index(mes_seleccionado) + 1
     dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
     
-    df_mes = load_data_mes(mes_index, anio_actual)
-    if not df_mes.empty:
-        df_mes.columns = [c.lower() for c in df_mes.columns]
-        df_mes['fecha_convertida'] = pd.to_datetime(df_mes['fecha_inicio'], errors='coerce')
-        df_mes['duracion_horas'] = pd.to_numeric(df_mes['duracion_horas'], errors='coerce').fillna(0)
-        df_mes['clientes_afectados'] = pd.to_numeric(df_mes['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+    # Filtrar datos del mes seleccionado usando Pandas
+    df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy() if not df_total.empty else pd.DataFrame()
     
     st.divider()
     st.markdown("### 📉 Resumen Ejecutivo")
@@ -236,7 +245,6 @@ with st.sidebar:
         st.metric("Total Afectados", f"{cl_side} clientes")
         
         st.divider()
-        # Botón Generar PDF
         pdf_data = generar_pdf_ejecutivo(mes_seleccionado, anio_actual, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
         st.download_button(label="📥 Descargar PDF Ejecutivo", data=pdf_data, file_name=f"Reporte_NOC_{mes_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
     else:
@@ -259,7 +267,7 @@ if st.session_state.role == 'admin':
 tabs = st.tabs(nombres_pestanas)
 
 # ---------------------------------------------------------------------
-# [ETIQUETA: TAB 1 - DASHBOARD VISUAL + GANTT + HISTÓRICO + DRILLDOWN]
+# [ETIQUETA: TAB 1 - DASHBOARD VISUAL]
 # ---------------------------------------------------------------------
 with tabs[0]:
     st.title(f"Visor de Rendimiento: {mes_seleccionado} {anio_actual}")
@@ -272,14 +280,10 @@ with tabs[0]:
         downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, dias_mes * 24)
         delta_m, delta_a, delta_s, delta_dias = None, None, None, None
 
-        # Datos Mes Anterior para comparativa y deltas
-        df_pasado = pd.DataFrame()
         if mes_index > 1:
-            df_pasado = load_data_mes(mes_index - 1, anio_actual)
+            mes_pasado_nom = meses_nombres[mes_index - 2]
+            df_pasado = df_total[df_total['mes_nombre'] == mes_pasado_nom].copy() if not df_total.empty else pd.DataFrame()
             if not df_pasado.empty:
-                df_pasado.columns = [c.lower() for c in df_pasado.columns]
-                df_pasado['duracion_horas'] = pd.to_numeric(df_pasado['duracion_horas'], errors='coerce').fillna(0)
-                df_pasado['clientes_afectados'] = pd.to_numeric(df_pasado['clientes_afectados'], errors='coerce').fillna(0).astype(int)
                 dias_pasado = calendar.monthrange(anio_actual, mes_index - 1)[1]
                 d_b_p, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, dias_pasado * 24)
                 if mttr_p > 0: delta_m = f"{avg_mttr - mttr_p:+.1f} horas"
@@ -298,10 +302,11 @@ with tabs[0]:
         k5.metric("Afectados", f"{cl_imp} clientes")
         k6.metric("Impacto Acumulado", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse")
 
+        st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base para no alterar los promedios.")
+
         st.divider()
         st.markdown("### 🗺️ Análisis Geoespacial y Causas (Haz Clic en el Pastel)")
         
-        # Mapa con Topología Simulada (Líneas entre nodos)
         col_m1, col_m2 = st.columns([3, 2])
         with col_m1:
             df_mapa = df_filtrado.copy()
@@ -310,12 +315,10 @@ with tabs[0]:
             df_map_agg = df_mapa.groupby(['zona', 'lat', 'lon']).agg(Horas_Down=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
             
             fig_map = px.scatter_mapbox(df_map_agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas_Down", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
-            # Trazado Troncal (Zaragoza -> La Libertad -> Costa del Sol)
             fig_map.add_trace(go.Scattermapbox(mode="lines", lat=[13.5850, 13.4900, 13.3039], lon=[-89.2890, -89.3245, -88.9450], line=dict(width=2, color='rgba(0, 104, 201, 0.5)'), name="Troncal Fibra Sur"))
             fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig_map, use_container_width=True)
 
-        # Gráfico de Pastel Interactivo (Drill-Down)
         with col_m2:
             causas_cortas = {"Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra", "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía", "Corrosión en Equipos": "Corrosión", "Daños por Fauna": "Fauna", "Falla de Hardware": "Hardware", "Falla de Configuración": "Configuración", "Saturación de Tráfico": "Saturación", "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI", "Mantenimiento Programado": "Mantenimiento", "Vandalismo o Hurto": "Vandalismo", "Condiciones Climáticas": "Clima"}
             df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
@@ -323,11 +326,8 @@ with tabs[0]:
             fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
             fig_rca.update_traces(textposition='inside', textinfo='percent+label', textfont_size=14)
             fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
-            
-            # Selección de Eventos
             seleccion_pastel = st.plotly_chart(fig_rca, use_container_width=True, on_select="rerun", selection_mode="points")
         
-        # Drill-down Result
         if seleccion_pastel and len(seleccion_pastel.selection.point_indices) > 0:
             idx = seleccion_pastel.selection.point_indices[0]
             causa_seleccionada = df_caus.iloc[idx]['Causa_Corta']
@@ -343,16 +343,15 @@ with tabs[0]:
             fig_eq.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
             st.plotly_chart(fig_eq, use_container_width=True)
 
-        # Tendencia Diaria Superpuesta con Mes Anterior
         with col_g2:
             df_trend = df_filtrado.copy()
             df_trend['Dia'] = pd.to_datetime(df_trend['fecha_convertida']).dt.day
             df_t_agg = df_trend.groupby('Dia').size().reset_index(name='Eventos')
             df_t_agg['Mes'] = 'Actual'
             
-            if not df_pasado.empty:
-                df_p_trend = df_pasado.copy()
-                df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_inicio']).dt.day
+            if mes_index > 1 and not df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].empty:
+                df_p_trend = df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].copy()
+                df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_convertida']).dt.day
                 df_p_agg = df_p_trend.groupby('Dia').size().reset_index(name='Eventos')
                 df_p_agg['Mes'] = 'Anterior'
                 df_t_agg = pd.concat([df_t_agg, df_p_agg])
@@ -396,19 +395,23 @@ if st.session_state.role == 'admin':
                 c_t1, c_t2 = st.columns(2)
                 with c_t1:
                     f_i = st.date_input("📅 Fecha de Inicio")
-                    if st.toggle("🕒 Asignar Hora de Inicio", value=False):
+                    asignar_hi = st.toggle("🕒 Asignar Hora de Inicio", value=False)
+                    if asignar_hi:
                         h_i = st.time_input("Hora de Apertura")
                         hora_inicio_final = h_i.strftime("%H:%M:%S")
                     else:
                         hora_inicio_final = None
+                        st.info("ℹ️ Al no asignar hora de inicio, el sistema no calculará duración.")
 
                 with c_t2:
                     f_f = st.date_input("📅 Fecha de Cierre")
-                    if st.toggle("🕒 Asignar Hora de Cierre", value=False):
+                    asignar_hf = st.toggle("🕒 Asignar Hora de Cierre", value=False)
+                    if asignar_hf:
                         h_f = st.time_input("Hora de Cierre")
                         final_h = h_f.strftime("%H:%M:%S")
                     else:
                         final_h = None
+                        st.info("ℹ️ Al no asignar hora de cierre, no se calculará duración.")
 
                 duracion = 0
                 desc_conocimiento = "Total" if hora_inicio_final and final_h else "Parcial"
@@ -419,8 +422,12 @@ if st.session_state.role == 'admin':
                 st.divider()
                 c_f1, c_f2 = st.columns(2)
                 with c_f1:
-                    if categoria == "Cliente Corporativo": clientes_form = 1
-                    else: clientes_form = st.number_input("👤 Clientes Afectados", min_value=0, step=1)
+                    if categoria == "Cliente Corporativo": 
+                        clientes_form = 1
+                        st.info("🏢 Segmento Corporativo: Se contabiliza 1 enlace afectado de forma automática.", icon="ℹ️")
+                    else: 
+                        clientes_form = st.number_input("👤 Clientes Afectados", min_value=0, step=1)
+                
                 with c_f2:
                     causa = st.selectbox("🛠️ Causa Raíz", ["Corte de Fibra por Terceros", "Corte de Fibra (No Especificado)", "Caída de Árboles sobre Fibra", "Falla de Energía Comercial", "Corrosión en Equipos", "Daños por Fauna", "Falla de Hardware", "Falla de Configuración", "Falla de Redundancia", "Saturación de Tráfico", "Saturación en Servidor UNIFI", "Falla de Inicio en UNIFI", "Mantenimiento Programado", "Vandalismo o Hurto", "Condiciones Climáticas"])
                 
@@ -452,7 +459,10 @@ if st.session_state.role == 'admin':
         st.title("🗂️ Auditoría de Base de Datos")
         if df_mes.empty: st.info("No hay datos en el mes.")
         else:
+            busqueda = st.text_input("🔎 Buscar en registros:", placeholder="Filtrar tabla...")
             df_display = df_mes.copy()
+            if busqueda: df_display = df_display[df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)]
+            
             df_display.insert(0, "Seleccionar", False)
             cols_drop = [c for c in ['fecha_convertida', 'mes_nombre', 'lat', 'lon'] if c in df_display.columns]
 
@@ -497,7 +507,7 @@ if st.session_state.role == 'admin':
                 n_pwd = st.text_input("Contraseña", type="password")
                 n_rol = st.selectbox("Rol", ["viewer", "admin"])
                 n_pre = st.text_input("Pregunta de Seguridad")
-                n_res = st.text_input("Respuesta")
+                n_res = st.text_input("Respuesta Secreta")
                 
                 if st.button("Crear Usuario"):
                     if n_usr and n_pwd:
@@ -505,8 +515,8 @@ if st.session_state.role == 'admin':
                             with engine.begin() as conn:
                                 conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES (:u, :h, :r, :p, :res)"), 
                                             {"u": n_usr, "h": hash_password(n_pwd), "r": n_rol, "p": n_pre, "res": n_res})
-                            st.success(f"Usuario {n_usr} creado.")
-                        except Exception as e: st.error(f"Error: Posible usuario duplicado.")
+                            st.success(f"Usuario {n_usr} creado exitosamente.")
+                        except Exception as e: st.error(f"Error: Es posible que el usuario ya exista.")
         
         with col_logs:
             st.markdown("#### 📜 Registro de Actividad (Logs)")
@@ -515,4 +525,4 @@ if st.session_state.role == 'admin':
                     logs = pd.read_sql(text("SELECT timestamp as Fecha, username as Usuario, action as Accion, details as Detalles FROM audit_logs ORDER BY id DESC LIMIT 50"), conn)
                 st.dataframe(logs, use_container_width=True, hide_index=True)
             except:
-                st.info("No hay logs disponibles o la tabla no está creada.")
+                st.info("No hay logs disponibles o la tabla de auditoría no está creada.")
