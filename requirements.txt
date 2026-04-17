@@ -1,6 +1,7 @@
 streamlit
 pandas
+sqlalchemy
+psycopg2-binary
 gspread
 oauth2client
-plotly
-fpdf
+python-dotenv
