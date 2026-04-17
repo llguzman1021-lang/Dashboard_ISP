@@ -29,9 +29,6 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #0068c9 !important; border-color: #0068c9 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0px !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
-    
-    /* Centrar login */
-    .login-box { max-width: 400px; margin: auto; padding: 30px; background-color: #1e1e2f; border-radius: 15px; border: 1px solid #333; text-align: center;}
     </style>
     """, unsafe_allow_html=True)
 
@@ -50,14 +47,23 @@ def hash_password(password):
 def check_password(password, hashed):
     return bcrypt.checkpw(password.encode('utf-8'), hashed.encode('utf-8'))
 
-# Inicializar Usuarios y Tablas por defecto si no existen
 def init_db():
     with engine.begin() as conn:
-        res = conn.execute(text("SELECT count(*) FROM users")).scalar()
-        if res == 0:
-            admin_hash = hash_password("admin123")
+        # Añadir columnas de seguridad si no existen (Actualización de BD)
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0;"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP;"))
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;"))
+        
+        # Verificar y crear al Super Admin intocable
+        res_admin = conn.execute(text("SELECT count(*) FROM users WHERE username = 'Admin'")).scalar()
+        if res_admin == 0:
+            admin_hash = hash_password("Areakde5")
+            conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('Admin', :hash1, 'admin', '¿Color favorito?', 'azul')"), {"hash1": admin_hash})
+            
+        # Crear visor de prueba
+        res_view = conn.execute(text("SELECT count(*) FROM users WHERE username = 'viewer'")).scalar()
+        if res_view == 0:
             view_hash = hash_password("view123")
-            conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('admin', :hash1, 'admin', '¿Color favorito?', 'azul')"), {"hash1": admin_hash})
             conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('viewer', :hash2, 'viewer', '¿Mascota?', 'perro')"), {"hash2": view_hash})
 
 try:
@@ -66,35 +72,83 @@ except Exception as e:
     st.error(f"Error inicializando DB: {e}")
 
 # =====================================================================
-# [ETIQUETA: SISTEMA DE LOGIN Y RECUPERACIÓN DB]
+# [ETIQUETA: SISTEMA DE LOGIN Y RECUPERACIÓN AVANZADA]
 # =====================================================================
-if 'logged_in' not in st.session_state:
-    st.session_state.logged_in = False
-    st.session_state.role = None
-    st.session_state.username = None
+if 'logged_in' not in st.session_state: st.session_state.logged_in = False
+if 'role' not in st.session_state: st.session_state.role = None
+if 'username' not in st.session_state: st.session_state.username = None
+
+# Variables de estado para los campos de login (permiten limpieza)
+if 'log_u' not in st.session_state: st.session_state.log_u = ""
+if 'log_p' not in st.session_state: st.session_state.log_p = ""
+if 'log_err' not in st.session_state: st.session_state.log_err = ""
+if 'log_msg' not in st.session_state: st.session_state.log_msg = ""
+
+def procesar_login():
+    u_in = st.session_state.log_u
+    p_in = st.session_state.log_p
+    
+    try:
+        with engine.begin() as conn:
+            user_data = conn.execute(text("SELECT id, password_hash, role, failed_attempts, locked_until, is_banned FROM users WHERE username = :u"), {"u": u_in}).fetchone()
+            
+            if user_data:
+                uid, p_hash, role, f_att, lock_dt, is_banned = user_data
+                f_att = f_att or 0
+                
+                if is_banned:
+                    st.session_state.log_err = "❌ Cuenta bloqueada permanentemente. Contacte a su administrador."
+                elif lock_dt and lock_dt > datetime.now():
+                    mins_left = (lock_dt - datetime.now()).seconds // 60 + 1
+                    st.session_state.log_err = f"⏳ Cuenta bloqueada por seguridad. Intente en {mins_left} minutos."
+                elif check_password(p_in, p_hash):
+                    # Exito - Reiniciar contadores
+                    conn.execute(text("UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = :id"), {"id": uid})
+                    st.session_state.logged_in = True
+                    st.session_state.role = role
+                    st.session_state.username = u_in
+                    st.session_state.log_err = ""
+                    return # Cierra la funcion sin borrar campos, el rerun hará el resto
+                else:
+                    # Falla - Incrementar intentos
+                    f_att += 1
+                    if f_att >= 15:
+                        conn.execute(text("UPDATE users SET is_banned = TRUE, failed_attempts = :f WHERE id = :id"), {"f": f_att, "id": uid})
+                        st.session_state.log_err = "❌ Cuenta bloqueada permanentemente (15 intentos fallidos)."
+                    elif f_att % 5 == 0:
+                        l_dt = datetime.now() + timedelta(minutes=5)
+                        conn.execute(text("UPDATE users SET locked_until = :dt, failed_attempts = :f WHERE id = :id"), {"dt": l_dt, "f": f_att, "id": uid})
+                        st.session_state.log_err = "⏳ Demasiados intentos. Cuenta bloqueada por 5 minutos."
+                    else:
+                        conn.execute(text("UPDATE users SET failed_attempts = :f WHERE id = :id"), {"f": f_att, "id": uid})
+                        st.session_state.log_err = f"❌ Credenciales incorrectas. Intento {f_att}/15."
+            else:
+                st.session_state.log_err = "❌ Credenciales incorrectas."
+    except Exception as e:
+        st.session_state.log_err = f"Error de conexión: {e}"
+
+    # Si llega aquí, significa que falló. Borramos credenciales
+    st.session_state.log_u = ""
+    st.session_state.log_p = ""
 
 if not st.session_state.logged_in:
     st.markdown("<div style='margin-top: 10vh;'></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
+        if st.session_state.log_msg:
+            st.success(st.session_state.log_msg)
+            st.session_state.log_msg = ""
+        if st.session_state.log_err:
+            st.error(st.session_state.log_err)
+            st.session_state.log_err = ""
+
         with st.container(border=True):
             st.markdown("<h2 style='text-align: center;'>🔐 Acceso NOC Multinet</h2>", unsafe_allow_html=True)
             st.write("")
-            user_input = st.text_input("Usuario")
-            pass_input = st.text_input("Contraseña", type="password")
             
-            if st.button("Iniciar Sesión", type="primary"):
-                try:
-                    with engine.connect() as conn:
-                        user_data = conn.execute(text("SELECT password_hash, role FROM users WHERE username = :u"), {"u": user_input}).fetchone()
-                        if user_data and check_password(pass_input, user_data[0]):
-                            st.session_state.logged_in = True
-                            st.session_state.role = user_data[1]
-                            st.session_state.username = user_input
-                            st.rerun()
-                        else:
-                            st.error("Credenciales incorrectas.")
-                except Exception as e: st.error(f"Error de conexión: {e}")
+            st.text_input("Usuario", key="log_u")
+            st.text_input("Contraseña", type="password", key="log_p")
+            st.button("Iniciar Sesión", type="primary", on_click=procesar_login)
             
             with st.expander("¿Olvidó su contraseña?"):
                 rec_user = st.text_input("Ingrese su usuario:")
@@ -110,21 +164,21 @@ if not st.session_state.logged_in:
                                         new_pass = st.text_input("Nueva contraseña:", type="password")
                                         if st.button("Actualizar") and new_pass:
                                             with engine.begin() as c2:
-                                                c2.execute(text("UPDATE users SET password_hash = :h WHERE username = :u"), {"h": hash_password(new_pass), "u": rec_user})
-                                            st.success("Contraseña actualizada.")
+                                                c2.execute(text("UPDATE users SET password_hash = :h, failed_attempts = 0, locked_until = NULL, is_banned = FALSE WHERE username = :u"), {"h": hash_password(new_pass), "u": rec_user})
+                                            st.session_state.log_msg = "Contraseña restablecida. Cuenta desbloqueada. Ya puede iniciar sesión."
+                                            st.rerun() # Refresca pantalla completa
                                     else: st.error("Respuesta incorrecta.")
                             else: st.error("Usuario no existe.")
                     except Exception as e: st.error(f"Error: {e}")
     st.stop()
 
 # =====================================================================
-# [ETIQUETA: FUNCIONES DE LOG DE AUDITORÍA Y PDF REPARADO]
+# [ETIQUETA: FUNCIONES DE LOG DE AUDITORÍA Y PDF]
 # =====================================================================
 def log_audit(action, details):
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO audit_logs (username, action, details) VALUES (:u, :a, :d)"), 
-                         {"u": st.session_state.username, "a": action, "d": details})
+            conn.execute(text("INSERT INTO audit_logs (username, action, details) VALUES (:u, :a, :d)"), {"u": st.session_state.username, "a": action, "d": details})
     except: pass
 
 def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_fallas):
@@ -135,7 +189,6 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
     pdf.set_font("Arial", 'I', 12)
     pdf.cell(200, 10, txt=f"Periodo Analizado: {mes} {anio}", ln=True, align='C')
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="1. Indicadores Clave de Rendimiento (KPIs)", ln=True)
     pdf.set_font("Arial", '', 12)
@@ -145,21 +198,16 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
     pdf.cell(200, 8, txt=f"- Total Clientes Afectados: {clientes} usuarios", ln=True)
     pdf.cell(200, 8, txt=f"- Impacto Acumulado en la Red: {d_total:.1f} dias", ln=True)
     pdf.ln(10)
-    
     pdf.set_font("Arial", 'B', 14)
     pdf.cell(200, 10, txt="2. Top 5 Zonas mas Afectadas (Horas Caidas)", ln=True)
     pdf.set_font("Arial", '', 12)
     if not df_fallas.empty:
         top_zonas = df_fallas.groupby('zona')['duracion_horas'].sum().nlargest(5)
-        for z, h in top_zonas.items():
-            pdf.cell(200, 8, txt=f"- {z}: {h:.1f} horas", ln=True)
-    else:
-        pdf.cell(200, 8, txt="Sin incidencias registradas.", ln=True)
-        
+        for z, h in top_zonas.items(): pdf.cell(200, 8, txt=f"- {z}: {h:.1f} horas", ln=True)
+    else: pdf.cell(200, 8, txt="Sin incidencias registradas.", ln=True)
     try:
         pdf_bytes = pdf.output()
-        if isinstance(pdf_bytes, str):
-            return pdf_bytes.encode('latin-1')
+        if isinstance(pdf_bytes, str): return pdf_bytes.encode('latin-1')
         return bytes(pdf_bytes)
     except Exception:
         return pdf.output(dest='S').encode('latin-1')
@@ -169,14 +217,7 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
 # =====================================================================
 PALETA_CORP = ['#0068c9', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b', '#7defa1']
 meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
-
-COORDS_ZONAS = {
-    "Papaya Garden": {"lat": 13.4925, "lon": -89.3822}, "La Libertad - Conchalio": {"lat": 13.4900, "lon": -89.3245},
-    "La Libertad - Julupe": {"lat": 13.5011, "lon": -89.3300}, "Costa del Sol": {"lat": 13.3039, "lon": -88.9450},
-    "OLT ARG": {"lat": 13.4880, "lon": -89.3200}, "La Libertad - Agroferreteria": {"lat": 13.4905, "lon": -89.3210},
-    "Servidores Gabriela Mistral": {"lat": 13.7000, "lon": -89.2000}, "Los Blancos": {"lat": 13.3100, "lon": -88.9200},
-    "Zaragoza": {"lat": 13.5850, "lon": -89.2890}
-}
+COORDS_ZONAS = {"Papaya Garden": {"lat": 13.4925, "lon": -89.3822}, "La Libertad - Conchalio": {"lat": 13.4900, "lon": -89.3245}, "La Libertad - Julupe": {"lat": 13.5011, "lon": -89.3300}, "Costa del Sol": {"lat": 13.3039, "lon": -88.9450}, "OLT ARG": {"lat": 13.4880, "lon": -89.3200}, "La Libertad - Agroferreteria": {"lat": 13.4905, "lon": -89.3210}, "Servidores Gabriela Mistral": {"lat": 13.7000, "lon": -89.2000}, "Los Blancos": {"lat": 13.3100, "lon": -88.9200}, "Zaragoza": {"lat": 13.5850, "lon": -89.2890}}
 COORD_DEFAULT = {"lat": 13.6929, "lon": -89.2182}
 
 @st.cache_data(ttl=60)
@@ -186,17 +227,13 @@ def load_data():
         with engine.connect() as conn:
             conn.execute(text("ROLLBACK"))
             return pd.read_sql(text(query), conn)
-    except Exception:
-        engine.dispose()
-        with engine.connect() as conn:
-            return pd.read_sql(text(query), conn)
+    except: return pd.DataFrame()
 
 def calcular_metricas(df_kpi, horas_rango_total):
     if df_kpi.empty: return 0.0, 0.0, 100.0, 0.0, 0, 0.0
     downtime_bruto = df_kpi['duracion_horas'].sum()
     mask_acd = (df_kpi['duracion_horas'] > 0) & (df_kpi['clientes_afectados'] > 0)
     acd = ((df_kpi.loc[mask_acd, 'duracion_horas'] * df_kpi.loc[mask_acd, 'clientes_afectados']).sum() / df_kpi.loc[mask_acd, 'clientes_afectados'].sum()) if mask_acd.any() else 0.0
-    
     tiempo_real = 0.0
     v_kpi = df_kpi[df_kpi['conocimiento_tiempos'] == 'Total'].copy()
     if not v_kpi.empty:
@@ -210,12 +247,10 @@ def calcular_metricas(df_kpi, horas_rango_total):
                 if c[0] <= mg[-1][1]: mg[-1][1] = max(mg[-1][1], c[1])
                 else: mg.append(list(c))
             tiempo_real = sum((end - stp).total_seconds() for stp, end in mg) / 3600.0
-
     sla_resultante = max(0.0, min(100.0, ((horas_rango_total - tiempo_real) / horas_rango_total) * 100)) if horas_rango_total > 0 else 100.0
     mttr = df_kpi[df_kpi['duracion_horas'] > 0]['duracion_horas'].mean() if not df_kpi[df_kpi['duracion_horas'] > 0].empty else 0.0
     return downtime_bruto, acd, sla_resultante, mttr, int(df_kpi['clientes_afectados'].sum()), (df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0)
 
-# Procesamiento General
 df_total = pd.DataFrame()
 try:
     df_total = load_data()
@@ -225,22 +260,20 @@ try:
         df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None)
         df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
         df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
-except Exception as e:
-    st.error(f"⚠️ Error BD: {e}")
+except Exception as e: st.error(f"⚠️ Error BD: {e}")
 
 # =====================================================================
-# [ETIQUETA: SIDEBAR Y FILTRO MENSUAL]
+# [ETIQUETA: SIDEBAR]
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.3")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v10.0")
     
     anio_actual = datetime.now().year
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
     mes_index = meses_nombres.index(mes_seleccionado) + 1
     dias_mes = calendar.monthrange(anio_actual, mes_index)[1]
     
-    # Filtrar datos del mes seleccionado usando Pandas
     df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy() if not df_total.empty else pd.DataFrame()
     
     st.divider()
@@ -267,8 +300,7 @@ with st.sidebar:
 # [ETIQUETA: ESTRUCTURA DE PESTAÑAS SEGÚN ROL]
 # =====================================================================
 nombres_pestanas = ["📊 Dashboard de Monitoreo"]
-if st.session_state.role == 'admin':
-    nombres_pestanas.extend(["📝 Registro Operativo", "🔐 Auditoría BD", "👥 Usuarios y Logs"])
+if st.session_state.role == 'admin': nombres_pestanas.extend(["📝 Registro Operativo", "🔐 Auditoría BD", "👥 Usuarios y Logs"])
 
 tabs = st.tabs(nombres_pestanas)
 
@@ -277,12 +309,10 @@ tabs = st.tabs(nombres_pestanas)
 # ---------------------------------------------------------------------
 with tabs[0]:
     st.title(f"Visor de Rendimiento: {mes_seleccionado} {anio_actual}")
-
     if df_mes.empty:
         st.success(f"🟢 Excelente estado: No hay fallas registradas en {mes_seleccionado}.")
     else:
         df_filtrado = df_mes.copy()
-
         downtime_total, acd_horas, sla_porcentaje, avg_mttr, cl_imp, max_h = calcular_metricas(df_filtrado, dias_mes * 24)
         delta_m, delta_a, delta_s, delta_dias = None, None, None, None
 
@@ -300,26 +330,22 @@ with tabs[0]:
         st.markdown("### 🎯 Indicadores Clave de Rendimiento (KPIs)")
         k1, k2, k3 = st.columns(3)
         k1.metric("MTTR", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse", help="Tiempo Promedio de Resolución")
-        k2.metric("Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, help="Nivel integral de servicio operativo (SLA)")
-        k3.metric("Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas", delta=delta_a, delta_color="inverse", help="Promedio estadístico de horas continuas.")
+        k2.metric("Disponibilidad (SLA)", f"{sla_porcentaje:.2f}%", delta=delta_s, help="Nivel integral de servicio operativo")
+        k3.metric("Afectación por Cliente (ACD)", f"{acd_horas:.2f} horas", delta=delta_a, delta_color="inverse", help="Horas promedio de interrupción.")
         st.write("") 
         k4, k5, k6 = st.columns(3)
         k4.metric("Falla Crítica", f"{max_h:.2f} horas")
         k5.metric("Afectados", f"{cl_imp} clientes")
         k6.metric("Impacto Acumulado", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse")
 
-        st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad de clientes mostrada es una estimación. Cuando no se cuenta con el dato exacto, el sistema usa un valor base para no alterar los promedios.")
-
         st.divider()
         st.markdown("### 🗺️ Análisis Geoespacial y Causas (Haz Clic en el Pastel)")
-        
         col_m1, col_m2 = st.columns([3, 2])
         with col_m1:
             df_mapa = df_filtrado.copy()
             df_mapa['lat'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lat'])
             df_mapa['lon'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lon'])
             df_map_agg = df_mapa.groupby(['zona', 'lat', 'lon']).agg(Horas_Down=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
-            
             fig_map = px.scatter_mapbox(df_map_agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas_Down", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
             fig_map.add_trace(go.Scattermapbox(mode="lines", lat=[13.5850, 13.4900, 13.3039], lon=[-89.2890, -89.3245, -88.9450], line=dict(width=2, color='rgba(0, 104, 201, 0.5)'), name="Troncal Fibra Sur"))
             fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0))
@@ -354,14 +380,12 @@ with tabs[0]:
             df_trend['Dia'] = pd.to_datetime(df_trend['fecha_convertida']).dt.day
             df_t_agg = df_trend.groupby('Dia').size().reset_index(name='Eventos')
             df_t_agg['Mes'] = 'Actual'
-            
             if mes_index > 1 and not df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].empty:
                 df_p_trend = df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].copy()
                 df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_convertida']).dt.day
                 df_p_agg = df_p_trend.groupby('Dia').size().reset_index(name='Eventos')
                 df_p_agg['Mes'] = 'Anterior'
                 df_t_agg = pd.concat([df_t_agg, df_p_agg])
-
             fig_trend = px.line(df_t_agg, x='Dia', y='Eventos', color='Mes', title="Tendencia Diaria (vs Mes Anterior)", color_discrete_map={"Actual": "#0068c9", "Anterior": "rgba(255,255,255,0.2)"})
             fig_trend.update_traces(fill='tozeroy')
             fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Día del Mes", yaxis_title="")
@@ -373,7 +397,6 @@ with tabs[0]:
         df_gantt['Start'] = pd.to_datetime(df_gantt['fecha_inicio'].astype(str) + ' ' + df_gantt['hora_inicio'].astype(str), errors='coerce')
         df_gantt['End'] = pd.to_datetime(df_gantt['fecha_fin'].astype(str) + ' ' + df_gantt['hora_fin'].astype(str), errors='coerce')
         df_gantt = df_gantt.dropna(subset=['Start', 'End'])
-        
         if not df_gantt.empty:
             fig_gantt = px.timeline(df_gantt, x_start="Start", x_end="End", y="zona", color="causa_raiz", color_discrete_sequence=PALETA_CORP)
             fig_gantt.update_yaxes(autorange="reversed")
@@ -399,8 +422,6 @@ if st.session_state.role == 'admin':
 
                 st.divider()
                 c_t1, c_t2 = st.columns(2)
-                
-                # --- MENSAJES INFO RESTAURADOS ---
                 with c_t1:
                     f_i = st.date_input("📅 Fecha de Inicio")
                     asignar_hi = st.toggle("🕒 Asignar Hora de Inicio", value=False)
@@ -429,7 +450,6 @@ if st.session_state.role == 'admin':
 
                 st.divider()
                 c_f1, c_f2 = st.columns(2)
-                
                 with c_f1:
                     if categoria == "Cliente Corporativo": 
                         clientes_form = 1
@@ -503,43 +523,74 @@ if st.session_state.role == 'admin':
                                 })
                                 log_audit("UPDATE", f"Modificado registro ID {int(edit_row['id'])}")
                     st.cache_data.clear(); st.rerun()
-
-            # --- NUEVO: SECCIÓN DE EXPORTACIÓN EN TAB 3 ---
+            
             st.divider()
             st.markdown("### 📥 Exportar Reportes")
             c_exp1, c_exp2 = st.columns(2)
-            with c_exp1:
-                st.download_button("📥 Exportar Datos Crudos (CSV)", df_display.to_csv(index=False).encode('utf-8'), f"Datos_NOC_{mes_seleccionado}.csv", "text/csv", use_container_width=True)
+            with c_exp1: st.download_button("📥 Exportar Datos Crudos (CSV)", df_display.to_csv(index=False).encode('utf-8'), f"Datos_NOC_{mes_seleccionado}.csv", "text/csv", use_container_width=True)
             with c_exp2:
-                # Reutilizamos la función del sidebar
                 d_tot, acd_s, sla_s, mttr_side, cl_side, max_h_s = calcular_metricas(df_mes, dias_mes * 24)
                 pdf_data_tab3 = generar_pdf_ejecutivo(mes_seleccionado, anio_actual, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
                 st.download_button(label="📥 Descargar Reporte Ejecutivo (PDF)", data=pdf_data_tab3, file_name=f"Reporte_NOC_{mes_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
 
     with tabs[3]:
         st.title("👥 Gestión de Usuarios y Auditoría")
-        
         col_users, col_logs = st.columns([1, 2], gap="large")
         
         with col_users:
             st.markdown("#### 👤 Crear Nuevo Usuario")
-            with st.container(border=True):
+            with st.form("form_crear_usuario", clear_on_submit=True):
                 n_usr = st.text_input("Usuario")
                 n_pwd = st.text_input("Contraseña", type="password")
                 n_rol = st.selectbox("Rol", ["viewer", "admin"])
                 n_pre = st.text_input("Pregunta de Seguridad")
                 n_res = st.text_input("Respuesta Secreta")
                 
-                if st.button("Crear Usuario"):
+                if st.form_submit_button("Crear Usuario"):
                     if n_usr and n_pwd:
                         try:
                             with engine.begin() as conn:
                                 conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES (:u, :h, :r, :p, :res)"), 
                                             {"u": n_usr, "h": hash_password(n_pwd), "r": n_rol, "p": n_pre, "res": n_res})
                             st.success(f"Usuario {n_usr} creado exitosamente.")
+                            time.sleep(1)
+                            st.rerun()
                         except Exception as e: st.error(f"Error: Es posible que el usuario ya exista.")
         
         with col_logs:
+            st.markdown("#### 📋 Panel de Usuarios Activos")
+            try:
+                with engine.connect() as conn:
+                    df_usrs = pd.read_sql(text("SELECT id, username, role, is_banned, failed_attempts FROM users"), conn)
+                
+                df_usrs.insert(0, "Seleccionar", False)
+                ed_usrs = st.data_editor(df_usrs, column_config={"Seleccionar": st.column_config.CheckboxColumn("✔", default=False), "id": None, "username": "Usuario", "role": "Rol", "is_banned": "Baneado", "failed_attempts": "Intentos Fallidos"}, use_container_width=True, hide_index=True, key="ed_usr")
+                
+                filas_usr_del = ed_usrs[ed_usrs["Seleccionar"] == True]
+                hay_cambios_usr = not df_usrs.drop(columns=['Seleccionar']).reset_index(drop=True).equals(ed_usrs.drop(columns=['Seleccionar']).reset_index(drop=True))
+                
+                if not filas_usr_del.empty or hay_cambios_usr:
+                    cu1, cu2 = st.columns(2)
+                    if not filas_usr_del.empty and cu1.button("🗑️ Eliminar Usuarios", type="primary", use_container_width=True):
+                        if "Admin" in filas_usr_del['username'].values:
+                            st.error("❌ Acción denegada: No se puede eliminar al Super Administrador (Admin).")
+                        else:
+                            with engine.begin() as conn:
+                                for rid in filas_usr_del['id']: conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": int(rid)})
+                            st.success("Usuarios eliminados.")
+                            time.sleep(1); st.rerun()
+                    
+                    if hay_cambios_usr and cu2.button("💾 Guardar Permisos", type="primary", use_container_width=True):
+                        with engine.begin() as conn:
+                            for i, e_row in ed_usrs.iterrows():
+                                o_row = df_usrs.drop(columns=['Seleccionar']).iloc[i]
+                                if not o_row.equals(e_row):
+                                    conn.execute(text("UPDATE users SET role=:r, is_banned=:b, failed_attempts=:f WHERE id=:id"), {"r": str(e_row['role']), "b": bool(e_row['is_banned']), "f": int(e_row['failed_attempts']), "id": int(e_row['id'])})
+                        st.success("Permisos actualizados.")
+                        time.sleep(1); st.rerun()
+            except: st.info("Error cargando usuarios.")
+            
+            st.divider()
             st.markdown("#### 📜 Registro de Actividad (Logs)")
             try:
                 with engine.connect() as conn:
