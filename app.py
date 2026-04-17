@@ -8,30 +8,39 @@ import calendar
 import time
 import bcrypt
 import io
+import math
 from fpdf import FPDF
+import pytz
 
 # =====================================================================
-# [ETIQUETA: CONFIGURACIÓN INICIAL Y ESTILOS AVANZADOS]
+# [ETIQUETA: CONFIGURACIÓN INICIAL, ESTILOS Y ZONA HORARIA]
 # =====================================================================
-st.set_page_config(page_title="Multinet NOC Analytics", layout="wide", page_icon="🌐")
+st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="🌐")
+
+# Configuración estricta de Zona Horaria para El Salvador
+SV_TZ = pytz.timezone('America/El_Salvador')
+def get_now():
+    return datetime.now(SV_TZ)
 
 st.markdown("""
     <style>
-    div.stButton > button:first-child { background-color: #0068c9; color: white; border-radius: 8px; width: 100%; font-weight: 600; border: none; transition: all 0.2s; }
-    div.stButton > button:first-child:hover { background-color: #0056a3; }
-    div[data-testid="stButton-delete"] > button:first-child { background-color: #c0392b !important; }
-    div[data-testid="stButton-save"] > button:first-child { background-color: #27ae60 !important; }
+    div.stButton > button:first-child { border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.2s; }
+    div[data-testid="stButton-delete"] > button:first-child { background-color: #c0392b !important; color: white !important;}
+    div[data-testid="stButton-save"] > button:first-child { background-color: #27ae60 !important; color: white !important;}
     [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 36px !important; font-weight: 800 !important; }
     [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 16px !important; font-weight: 500 !important; }
     div[data-testid="stTabs"] { background-color: transparent; }
     button[data-baseweb="tab"] { background-color: #1e1e2f !important; border-radius: 12px 12px 0px 0px !important; margin-right: 10px !important; padding: 16px 32px !important; border: 2px solid #333 !important; border-bottom: none !important; }
     button[data-baseweb="tab"]:hover { background-color: #2a2a3f !important; }
-    button[data-baseweb="tab"][aria-selected="true"] { background-color: #0068c9 !important; border-color: #0068c9 !important; }
+    button[data-baseweb="tab"][aria-selected="true"] { background-color: #f15c22 !important; border-color: #f15c22 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0px !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
     .login-box { max-width: 400px; margin: auto; padding: 30px; background-color: #1e1e2f; border-radius: 15px; border: 1px solid #333; text-align: center;}
     </style>
     """, unsafe_allow_html=True)
+
+# Paleta actualizada con los colores del Logo Multinet (Naranja y Azul Marino)
+PALETA_CORP = ['#f15c22', '#1d2c59', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b']
 
 # =====================================================================
 # [ETIQUETA: FUNCIONES DE BASE DE DATOS Y ENCRIPTACIÓN]
@@ -64,13 +73,11 @@ def init_db():
             view_hash = hash_password("view123")
             conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES ('viewer', :h, 'viewer', '¿Mascota?', 'perro')"), {"h": view_hash})
 
-try:
-    init_db()
-except Exception as e:
-    st.error(f"Error inicializando DB: {e}")
+try: init_db()
+except Exception as e: st.error(f"Error inicializando DB: {e}")
 
 # =====================================================================
-# [ETIQUETA: SISTEMA DE LOGIN Y SEGURIDAD ESTRICTA (6 INTENTOS)]
+# [ETIQUETA: SISTEMA DE LOGIN Y SEGURIDAD ESTRICTA]
 # =====================================================================
 if 'logged_in' not in st.session_state: st.session_state.logged_in = False
 if 'role' not in st.session_state: st.session_state.role = None
@@ -92,11 +99,12 @@ def procesar_login():
             if user_data:
                 uid, p_hash, role, f_att, lock_dt, is_banned = user_data
                 f_att = f_att or 0
+                now_sv = get_now().replace(tzinfo=None) # Comparar limpiamente
                 
                 if is_banned:
                     st.session_state.log_err = "❌ Cuenta bloqueada permanentemente. Contacte a un administrador."
-                elif lock_dt and lock_dt > datetime.now():
-                    mins_left = (lock_dt - datetime.now()).seconds // 60 + 1
+                elif lock_dt and lock_dt > now_sv:
+                    mins_left = (lock_dt - now_sv).seconds // 60 + 1
                     st.session_state.log_err = f"⏳ Cuenta bloqueada por seguridad. Intente en {mins_left} minutos."
                 elif check_password(p_in, p_hash):
                     conn.execute(text("UPDATE users SET failed_attempts = 0, locked_until = NULL WHERE id = :id"), {"id": uid})
@@ -111,7 +119,7 @@ def procesar_login():
                         conn.execute(text("UPDATE users SET is_banned = TRUE, failed_attempts = :f WHERE id = :id"), {"f": f_att, "id": uid})
                         st.session_state.log_err = "❌ Cuenta bloqueada permanentemente (6 intentos fallidos)."
                     elif f_att % 3 == 0:
-                        l_dt = datetime.now() + timedelta(minutes=5)
+                        l_dt = now_sv + timedelta(minutes=5)
                         conn.execute(text("UPDATE users SET locked_until = :dt, failed_attempts = :f WHERE id = :id"), {"dt": l_dt, "f": f_att, "id": uid})
                         st.session_state.log_err = "⏳ Demasiados intentos. Cuenta bloqueada por 5 minutos."
                     else:
@@ -129,15 +137,18 @@ if not st.session_state.logged_in:
     st.markdown("<div style='margin-top: 10vh;'></div>", unsafe_allow_html=True)
     col1, col2, col3 = st.columns([1, 1.2, 1])
     with col2:
+        try: st.image("logo.png", use_container_width=True) # Logo Multinet
+        except: st.markdown("<h1 style='text-align: center; color: #f15c22;'>MULTINET</h1>", unsafe_allow_html=True)
+            
         if st.session_state.log_msg:
-            st.success(st.session_state.log_msg)
+            st.toast(st.session_state.log_msg, icon="✅")
             st.session_state.log_msg = ""
         if st.session_state.log_err:
             st.error(st.session_state.log_err)
             st.session_state.log_err = ""
 
         with st.container(border=True):
-            st.markdown("<h2 style='text-align: center;'>🔐 Acceso NOC Multinet</h2>", unsafe_allow_html=True)
+            st.markdown("<h3 style='text-align: center;'>🔐 Acceso NOC Central</h3>", unsafe_allow_html=True)
             st.write("")
             st.text_input("Usuario", key="log_u")
             st.text_input("Contraseña", type="password", key="log_p")
@@ -158,7 +169,7 @@ if not st.session_state.logged_in:
                                         if st.button("Actualizar") and new_pass:
                                             with engine.begin() as c2:
                                                 c2.execute(text("UPDATE users SET password_hash = :h, failed_attempts = 0, locked_until = NULL, is_banned = FALSE WHERE username = :u"), {"h": hash_password(new_pass), "u": rec_user})
-                                            st.session_state.log_msg = "Contraseña restablecida. Cuenta desbloqueada."
+                                            st.session_state.log_msg = "Contraseña restablecida."
                                             st.rerun()
                                     else: st.error("Respuesta incorrecta.")
                             else: st.error("Usuario no existe.")
@@ -166,12 +177,13 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =====================================================================
-# [ETIQUETA: FUNCIONES DE LOG DE AUDITORÍA Y PDF]
+# [ETIQUETA: FUNCIONES LOG, PDF Y CACHÉ INTELIGENTE]
 # =====================================================================
 def log_audit(action, details):
     try:
         with engine.begin() as conn:
-            conn.execute(text("INSERT INTO audit_logs (username, action, details) VALUES (:u, :a, :d)"), {"u": st.session_state.username, "a": action, "d": details})
+            conn.execute(text("INSERT INTO audit_logs (timestamp, username, action, details) VALUES (:t, :u, :a, :d)"), 
+                         {"t": get_now().replace(tzinfo=None), "u": st.session_state.username, "a": action, "d": details})
     except: pass
 
 def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_fallas):
@@ -205,14 +217,13 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
     except Exception: return pdf.output(dest='S').encode('latin-1')
 
 # =====================================================================
-# [ETIQUETA: VARIABLES GLOBALES Y CARGA DE DATOS]
+# [ETIQUETA: DATOS GLOBALES Y MÉTRICAS]
 # =====================================================================
-PALETA_CORP = ['#0068c9', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b', '#7defa1']
 meses_nombres = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 COORDS_ZONAS = {"Papaya Garden": {"lat": 13.4925, "lon": -89.3822}, "La Libertad - Conchalio": {"lat": 13.4900, "lon": -89.3245}, "La Libertad - Julupe": {"lat": 13.5011, "lon": -89.3300}, "Costa del Sol": {"lat": 13.3039, "lon": -88.9450}, "OLT ARG": {"lat": 13.4880, "lon": -89.3200}, "La Libertad - Agroferreteria": {"lat": 13.4905, "lon": -89.3210}, "Servidores Gabriela Mistral": {"lat": 13.7000, "lon": -89.2000}, "Los Blancos": {"lat": 13.3100, "lon": -88.9200}, "Zaragoza": {"lat": 13.5850, "lon": -89.2890}}
 COORD_DEFAULT = {"lat": 13.6929, "lon": -89.2182}
 
-@st.cache_data(ttl=60)
+@st.cache_data(ttl=300)
 def load_data_mes(mes_idx, anio):
     start = f"{anio}-{mes_idx:02d}-01"
     ultimo_dia = calendar.monthrange(anio, mes_idx)[1]
@@ -247,17 +258,19 @@ def calcular_metricas(df_kpi, horas_rango_total):
     return downtime_bruto, acd, sla_resultante, mttr, int(df_kpi['clientes_afectados'].sum()), (df_kpi['duracion_horas'].max() if not df_kpi.empty else 0.0)
 
 # =====================================================================
-# [ETIQUETA: SIDEBAR Y FILTRO ANUAL + MENSUAL]
+# [ETIQUETA: SIDEBAR]
 # =====================================================================
 with st.sidebar:
-    st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v11.1")
+    try: st.image("logo.png") # Carga el logo
+    except: pass
     
-    anio_actual_real = datetime.now().year
+    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v12.0")
+    
+    anio_actual_real = get_now().year
     anios_disponibles = sorted(list(set([anio_actual_real+1, anio_actual_real, anio_actual_real-1, anio_actual_real-2])), reverse=True)
     
-    anio_seleccionado = st.selectbox("🗓️ Ciclo de Análisis Anual", anios_disponibles, index=anios_disponibles.index(anio_actual_real))
-    mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
+    anio_seleccionado = st.selectbox("🗓️ Ciclo Anual", anios_disponibles, index=anios_disponibles.index(anio_actual_real))
+    mes_seleccionado = st.selectbox("📅 Ciclo Mensual", meses_nombres, index=get_now().month - 1)
     
     mes_index = meses_nombres.index(mes_seleccionado) + 1
     dias_mes = calendar.monthrange(anio_seleccionado, mes_index)[1]
@@ -273,10 +286,11 @@ with st.sidebar:
     st.markdown("### 📉 Resumen Ejecutivo")
     if not df_mes.empty:
         d_tot, acd_s, sla_s, mttr_side, cl_side, max_h_s = calcular_metricas(df_mes, dias_mes * 24)
-        st.metric("Promedio Resolución", f"{mttr_side:.2f} horas")
-        st.metric("Total Afectados", f"{cl_side} clientes")
+        st.metric("Promedio Resolución", f"{mttr_side:.2f} hrs")
+        st.metric("Total Afectados", f"{cl_side} usr")
         st.divider()
-        pdf_data = generar_pdf_ejecutivo(mes_seleccionado, anio_seleccionado, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
+        with st.spinner("Generando PDF..."):
+            pdf_data = generar_pdf_ejecutivo(mes_seleccionado, anio_seleccionado, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
         st.download_button(label="📥 Descargar PDF Ejecutivo", data=pdf_data, file_name=f"Reporte_NOC_{mes_seleccionado}_{anio_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
     else:
         st.info("Sin datos registrados.")
@@ -344,7 +358,7 @@ with tabs[0]:
             df_mapa['lon'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lon'])
             df_map_agg = df_mapa.groupby(['zona', 'lat', 'lon']).agg(Horas_Down=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
             fig_map = px.scatter_mapbox(df_map_agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas_Down", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
-            fig_map.add_trace(go.Scattermapbox(mode="lines", lat=[13.5850, 13.4900, 13.3039], lon=[-89.2890, -89.3245, -88.9450], line=dict(width=2, color='rgba(0, 104, 201, 0.5)'), name="Troncal Fibra Sur"))
+            fig_map.add_trace(go.Scattermapbox(mode="lines", lat=[13.5850, 13.4900, 13.3039], lon=[-89.2890, -89.3245, -88.9450], line=dict(width=2, color='rgba(241, 92, 34, 0.7)'), name="Troncal Fibra Sur"))
             fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0))
             st.plotly_chart(fig_map, use_container_width=True)
 
@@ -368,7 +382,7 @@ with tabs[0]:
         col_g1, col_g2 = st.columns(2)
         with col_g1:
             df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
-            fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#29b09d'], text_auto='.0f')
+            fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#f15c22'], text_auto='.0f')
             fig_eq.update_traces(textposition='outside', cliponaxis=False)
             fig_eq.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
             st.plotly_chart(fig_eq, use_container_width=True)
@@ -388,7 +402,6 @@ with tabs[0]:
             df_t_agg = df_trend.groupby('Dia').size().reset_index(name='Eventos')
             df_t_agg['Mes'] = 'Actual'
             
-            # REPARADO: Se utiliza df_pasado para la tendencia superpuesta
             if mes_index > 1 and not df_pasado.empty:
                 df_p_trend = df_pasado.copy()
                 df_p_trend['Dia'] = pd.to_datetime(df_p_trend['fecha_inicio'], errors='coerce').dt.day
@@ -396,7 +409,7 @@ with tabs[0]:
                 df_p_agg['Mes'] = 'Anterior'
                 df_t_agg = pd.concat([df_t_agg, df_p_agg])
 
-            fig_trend = px.line(df_t_agg, x='Dia', y='Eventos', color='Mes', title="Tendencia Diaria (vs Mes Anterior)", color_discrete_map={"Actual": "#0068c9", "Anterior": "rgba(255,255,255,0.3)"}, markers=True)
+            fig_trend = px.line(df_t_agg, x='Dia', y='Eventos', color='Mes', title="Tendencia Diaria (vs Mes Anterior)", color_discrete_map={"Actual": "#f15c22", "Anterior": "rgba(255,255,255,0.3)"}, markers=True)
             fig_trend.update_traces(fill='tozeroy')
             fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Día del Mes", yaxis_title="Cantidad de Fallas", xaxis=dict(tickmode='linear', tick0=1, dtick=2))
             st.plotly_chart(fig_trend, use_container_width=True)
@@ -475,17 +488,29 @@ if st.session_state.role == 'admin':
                 desc = st.text_area("📝 Descripción Técnica y Detallada del Incidente")
 
                 if st.button("💾 Guardar Registro en Base de Datos", type="primary"):
-                    try:
-                        with engine.begin() as conn:
-                            conn.execute(text("""
-                                INSERT INTO incidents (worksheet_name, gsheet_id, zona, servicio, categoria, equipo_afectado, fecha_inicio, hora_inicio, fecha_fin, hora_fin, clientes_afectados, causa_raiz, descripcion, duracion_horas, conocimiento_tiempos) 
-                                VALUES (:ws, 0, :z, :s, :c, :e, :fi, :hi, :ff, :hf, :cl, :cr, :d, :dur, :con)
-                            """), {"ws": f"{meses_nombres[f_i.month - 1]} {f_i.year}", "z": zona, "s": servicio, "c": categoria, "e": equipo, "fi": f_i.strftime("%Y-%m-%d"), "hi": hora_inicio_final, "ff": f_f.strftime("%Y-%m-%d"), "hf": final_h, "cl": int(clientes_form), "cr": causa, "d": desc, "dur": duracion, "con": desc_conocimiento})
-                        log_audit("INSERT", f"Nueva falla en {zona} ({causa})")
-                        st.success("✅ Guardado Exitosamente.")
-                        time.sleep(1)
-                        st.cache_data.clear(); st.rerun()
-                    except Exception as e: st.error(f"Error: {e}")
+                    # Validación Lógica de Fechas
+                    validacion_pasada = True
+                    if f_i > f_f:
+                        st.error("❌ La Fecha de Cierre no puede ser anterior a la Fecha de Inicio.")
+                        validacion_pasada = False
+                    elif f_i == f_f and hora_inicio_final and final_h and h_i > h_f:
+                        st.error("❌ La Hora de Cierre no puede ser anterior a la Hora de Inicio.")
+                        validacion_pasada = False
+                        
+                    if validacion_pasada:
+                        try:
+                            with st.spinner("Guardando en Base de Datos..."):
+                                with engine.begin() as conn:
+                                    conn.execute(text("""
+                                        INSERT INTO incidents (worksheet_name, gsheet_id, zona, servicio, categoria, equipo_afectado, fecha_inicio, hora_inicio, fecha_fin, hora_fin, clientes_afectados, causa_raiz, descripcion, duracion_horas, conocimiento_tiempos) 
+                                        VALUES (:ws, 0, :z, :s, :c, :e, :fi, :hi, :ff, :hf, :cl, :cr, :d, :dur, :con)
+                                    """), {"ws": f"{meses_nombres[f_i.month - 1]} {f_i.year}", "z": zona, "s": servicio, "c": categoria, "e": equipo, "fi": f_i.strftime("%Y-%m-%d"), "hi": hora_inicio_final, "ff": f_f.strftime("%Y-%m-%d"), "hf": final_h, "cl": int(clientes_form), "cr": causa, "d": desc, "dur": duracion, "con": desc_conocimiento})
+                                log_audit("INSERT", f"Nueva falla en {zona} ({causa})")
+                                load_data_mes.clear(f_i.month, f_i.year) # CACHÉ INTELIGENTE
+                            st.toast("✅ Guardado Exitosamente.", icon="🎉")
+                            time.sleep(1)
+                            st.rerun()
+                        except Exception as e: st.error(f"Error: {e}")
 
         with col_contexto:
             st.markdown("#### 🕒 Actividad Reciente")
@@ -498,43 +523,57 @@ if st.session_state.role == 'admin':
 
     with tabs[2]:
         st.title("🗂️ Auditoría de Base de Datos")
-        if df_mes.empty: st.info("No hay datos en el mes.")
+        if df_mes.empty: st.info("No hay datos en el mes y año seleccionados.")
         else:
             busqueda = st.text_input("🔎 Buscar en registros:", placeholder="Filtrar tabla...")
             df_display = df_mes.copy()
             if busqueda: df_display = df_display[df_display.astype(str).apply(lambda x: x.str.contains(busqueda, case=False, na=False)).any(axis=1)]
             
-            df_display.insert(0, "Seleccionar", False)
-            cols_drop = [c for c in ['fecha_convertida', 'mes_nombre', 'lat', 'lon'] if c in df_display.columns]
+            # Paginación Tabla BD
+            ROWS_PER_PAGE = 15
+            total_pages = math.ceil(len(df_display) / ROWS_PER_PAGE) if len(df_display) > 0 else 1
+            col_pag1, col_pag2 = st.columns([8, 1])
+            with col_pag2: page = st.number_input("Página", min_value=1, max_value=total_pages, step=1)
+            
+            start_idx = (page - 1) * ROWS_PER_PAGE
+            end_idx = start_idx + ROWS_PER_PAGE
+            df_page = df_display.iloc[start_idx:end_idx].copy()
+            
+            df_page.insert(0, "Seleccionar", False)
+            cols_drop = [c for c in ['fecha_convertida', 'mes_nombre', 'lat', 'lon'] if c in df_page.columns]
 
             edited_df = st.data_editor(
-                df_display.drop(columns=cols_drop, errors='ignore'),
+                df_page.drop(columns=cols_drop, errors='ignore'),
                 column_config={"Seleccionar": st.column_config.CheckboxColumn("✔", default=False), "id": None, "worksheet_name": None, "gsheet_id": None},
-                use_container_width=True, hide_index=True, key="editor_bd"
+                use_container_width=True, hide_index=True, key=f"editor_bd_{page}"
             )
 
             filas_del = edited_df[edited_df["Seleccionar"] == True]
-            hay_cambios = not df_display.drop(columns=cols_drop + ['Seleccionar'], errors='ignore').reset_index(drop=True).equals(edited_df.drop(columns=['Seleccionar']).reset_index(drop=True))
+            hay_cambios = not df_page.drop(columns=cols_drop + ['Seleccionar'], errors='ignore').reset_index(drop=True).equals(edited_df.drop(columns=['Seleccionar']).reset_index(drop=True))
             
             if not filas_del.empty or hay_cambios:
                 c_b1, c_b2 = st.columns(2)
                 if not filas_del.empty and c_b1.button("🗑️ Eliminar Seleccionados", type="primary", use_container_width=True):
-                    with engine.begin() as conn:
-                        for rid in filas_del['id']: 
-                            conn.execute(text("DELETE FROM incidents WHERE id = :id"), {"id": int(rid)})
-                            log_audit("DELETE", f"Eliminado registro ID {rid}")
-                    st.cache_data.clear(); st.rerun()
+                    with st.spinner("Eliminando..."):
+                        with engine.begin() as conn:
+                            for rid in filas_del['id']: 
+                                conn.execute(text("DELETE FROM incidents WHERE id = :id"), {"id": int(rid)})
+                                log_audit("DELETE", f"Eliminado registro ID {rid}")
+                        load_data_mes.clear(mes_index, anio_seleccionado)
+                    st.toast("Registros eliminados", icon="✅"); time.sleep(1); st.rerun()
                 
                 if hay_cambios and c_b2.button("💾 Guardar Modificaciones", type="primary", use_container_width=True):
-                    with engine.begin() as conn:
-                        for i, edit_row in edited_df.iterrows():
-                            orig_row = df_display.drop(columns=cols_drop + ['Seleccionar'], errors='ignore').iloc[i]
-                            if not orig_row.equals(edit_row):
-                                conn.execute(text("UPDATE incidents SET zona=:z, servicio=:s, categoria=:c, equipo_afectado=:e, fecha_inicio=:fi, hora_inicio=:hi, fecha_fin=:ff, hora_fin=:hf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id"), {
-                                    "z": str(edit_row.get('zona','')), "s": str(edit_row.get('servicio','')), "c": str(edit_row.get('categoria','')), "e": str(edit_row.get('equipo_afectado','')), "fi": str(edit_row.get('fecha_inicio','')), "hi": None if str(edit_row.get('hora_inicio','')) in ["None","N/A",""] else str(edit_row.get('hora_inicio')), "ff": str(edit_row.get('fecha_fin','')), "hf": None if str(edit_row.get('hora_fin','')) in ["None","N/A",""] else str(edit_row.get('hora_fin')), "cl": int(edit_row.get('clientes_afectados',0)), "cr": str(edit_row.get('causa_raiz','')), "d": str(edit_row.get('descripcion','')), "dur": float(edit_row.get('duracion_horas',0)), "con": str(edit_row.get('conocimiento_tiempos','')), "id": int(edit_row['id'])
-                                })
-                                log_audit("UPDATE", f"Modificado registro ID {int(edit_row['id'])}")
-                    st.cache_data.clear(); st.rerun()
+                    with st.spinner("Guardando modificaciones..."):
+                        with engine.begin() as conn:
+                            for i, edit_row in edited_df.iterrows():
+                                orig_row = df_page.drop(columns=cols_drop + ['Seleccionar'], errors='ignore').iloc[i]
+                                if not orig_row.equals(edit_row):
+                                    conn.execute(text("UPDATE incidents SET zona=:z, servicio=:s, categoria=:c, equipo_afectado=:e, fecha_inicio=:fi, hora_inicio=:hi, fecha_fin=:ff, hora_fin=:hf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id"), {
+                                        "z": str(edit_row.get('zona','')), "s": str(edit_row.get('servicio','')), "c": str(edit_row.get('categoria','')), "e": str(edit_row.get('equipo_afectado','')), "fi": str(edit_row.get('fecha_inicio','')), "hi": None if str(edit_row.get('hora_inicio','')) in ["None","N/A",""] else str(edit_row.get('hora_inicio')), "ff": str(edit_row.get('fecha_fin','')), "hf": None if str(edit_row.get('hora_fin','')) in ["None","N/A",""] else str(edit_row.get('hora_fin')), "cl": int(edit_row.get('clientes_afectados',0)), "cr": str(edit_row.get('causa_raiz','')), "d": str(edit_row.get('descripcion','')), "dur": float(edit_row.get('duracion_horas',0)), "con": str(edit_row.get('conocimiento_tiempos','')), "id": int(edit_row['id'])
+                                    })
+                                    log_audit("UPDATE", f"Modificado registro ID {int(edit_row['id'])}")
+                        load_data_mes.clear(mes_index, anio_seleccionado)
+                    st.toast("Modificaciones guardadas", icon="✅"); time.sleep(1); st.rerun()
             
             st.divider()
             st.markdown("### 📥 Exportar Reportes")
@@ -542,7 +581,8 @@ if st.session_state.role == 'admin':
             with c_exp1: st.download_button("📥 Exportar Datos Crudos (CSV)", df_display.to_csv(index=False).encode('utf-8'), f"Datos_NOC_{mes_seleccionado}_{anio_seleccionado}.csv", "text/csv", use_container_width=True)
             with c_exp2:
                 d_tot, acd_s, sla_s, mttr_side, cl_side, max_h_s = calcular_metricas(df_mes, dias_mes * 24)
-                pdf_data_tab3 = generar_pdf_ejecutivo(mes_seleccionado, anio_seleccionado, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
+                with st.spinner("Generando PDF..."):
+                    pdf_data_tab3 = generar_pdf_ejecutivo(mes_seleccionado, anio_seleccionado, mttr_side, sla_s, acd_s, cl_side, d_tot/24.0, df_mes)
                 st.download_button(label="📥 Descargar Reporte Ejecutivo (PDF)", data=pdf_data_tab3, file_name=f"Reporte_NOC_{mes_seleccionado}_{anio_seleccionado}.pdf", mime="application/pdf", use_container_width=True)
 
     with tabs[3]:
@@ -564,7 +604,7 @@ if st.session_state.role == 'admin':
                             with engine.begin() as conn:
                                 conn.execute(text("INSERT INTO users (username, password_hash, role, pregunta, respuesta) VALUES (:u, :h, :r, :p, :res)"), 
                                             {"u": n_usr, "h": hash_password(n_pwd), "r": n_rol, "p": n_pre, "res": n_res})
-                            st.success(f"Usuario {n_usr} creado exitosamente.")
+                            st.toast(f"Usuario {n_usr} creado exitosamente.", icon="✅")
                             time.sleep(1)
                             st.rerun()
                         except Exception as e: st.error(f"Error: Es posible que el usuario ya exista.")
@@ -589,8 +629,7 @@ if st.session_state.role == 'admin':
                         else:
                             with engine.begin() as conn:
                                 for rid in filas_usr_del['id']: conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": int(rid)})
-                            st.success("Usuarios eliminados.")
-                            time.sleep(1); st.rerun()
+                            st.toast("Usuarios eliminados.", icon="✅"); time.sleep(1); st.rerun()
                     
                     if hay_cambios_usr and cu2.button("💾 Guardar Permisos", type="primary", use_container_width=True):
                         with engine.begin() as conn:
@@ -598,15 +637,24 @@ if st.session_state.role == 'admin':
                                 o_row = df_usrs.drop(columns=['Seleccionar']).iloc[i]
                                 if not o_row.equals(e_row):
                                     conn.execute(text("UPDATE users SET role=:r, is_banned=:b, failed_attempts=:f WHERE id=:id"), {"r": str(e_row['role']), "b": bool(e_row['is_banned']), "f": int(e_row['failed_attempts']), "id": int(e_row['id'])})
-                        st.success("Permisos actualizados.")
-                        time.sleep(1); st.rerun()
+                        st.toast("Permisos actualizados.", icon="✅"); time.sleep(1); st.rerun()
             except: st.info("Error cargando usuarios.")
             
             st.divider()
             st.markdown("#### 📜 Registro de Actividad (Logs)")
             try:
                 with engine.connect() as conn:
-                    logs = pd.read_sql(text("SELECT timestamp as Fecha, username as Usuario, action as Accion, details as Detalles FROM audit_logs ORDER BY id DESC LIMIT 50"), conn)
-                st.dataframe(logs, use_container_width=True, hide_index=True)
+                    logs = pd.read_sql(text("SELECT timestamp as Fecha, username as Usuario, action as Accion, details as Detalles FROM audit_logs ORDER BY id DESC"), conn)
+                
+                # Paginación de Logs
+                ROWS_PER_PAGE_LOGS = 15
+                tot_log_pages = math.ceil(len(logs) / ROWS_PER_PAGE_LOGS) if len(logs) > 0 else 1
+                c_lp1, c_lp2 = st.columns([8, 1])
+                with c_lp2: page_log = st.number_input("Página ", min_value=1, max_value=tot_log_pages, step=1, key="pg_log")
+                
+                s_idx = (page_log - 1) * ROWS_PER_PAGE_LOGS
+                e_idx = s_idx + ROWS_PER_PAGE_LOGS
+                
+                st.dataframe(logs.iloc[s_idx:e_idx], use_container_width=True, hide_index=True)
             except:
                 st.info("No hay logs disponibles o la tabla de auditoría no está creada.")
