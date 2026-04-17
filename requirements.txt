@@ -5,3 +5,4 @@ psycopg2-binary
 plotly
 bcrypt
 fpdf2
+pytz
