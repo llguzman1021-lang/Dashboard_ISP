@@ -155,14 +155,8 @@ with st.sidebar:
         dias_mes_side = calendar.monthrange(datetime.now().year, mes_index_side)[1]
         _, _, _, mttr_side, cl_side, _ = calcular_metricas(df_mes_sidebar, dias_mes_side * 24)
         
-        fallas_act_side = df_mes_sidebar[(df_mes_sidebar['hora_fin'].isnull()) | (df_mes_sidebar['hora_fin'] == '') | (df_mes_sidebar['hora_fin'] == 'None')]
-        
-        st.metric("Promedio Resolución", f"{mttr_side:.2f}h")
-        st.metric("Total Afectados", f"{cl_side} Usr")
-        if not fallas_act_side.empty:
-            st.error(f"🚨 {len(fallas_act_side)} Fallas Activas")
-        else:
-            st.success("✅ Red Estabilizada")
+        st.metric("Promedio Resolución", f"{mttr_side:.2f} horas")
+        st.metric("Total Afectados", f"{cl_side} clientes")
     else:
         st.info("Sin datos registrados.")
 
@@ -184,11 +178,6 @@ with tab1:
     else:
         df_filtrado = df_mes.copy()
         
-        # Alertas de Estado
-        fallas_activas = df_filtrado[(df_filtrado['hora_fin'].isnull()) | (df_filtrado['hora_fin'] == '') | (df_filtrado['hora_fin'] == 'None')]
-        if fallas_activas.empty: st.success("🟢 **ESTADO: NORMAL** - Red estabilizada.", icon="🟢")
-        else: st.error(f"🔴 **ESTADO: CRÍTICO** - {len(fallas_activas)} alerta(s) activa(s) en: {', '.join(fallas_activas['zona'].astype(str).unique())}.", icon="🔴")
-
         # Cálculos de Deltas vs Mes Anterior
         mes_index = meses_nombres.index(mes_seleccionado) + 1
         anio_actual = datetime.now().year
@@ -201,60 +190,63 @@ with tab1:
             df_pasado = df_total[df_total['mes_nombre'] == meses_nombres[mes_index - 2]].copy()
             if not df_pasado.empty:
                 d_b_p, acd_p, sla_p, mttr_p, _, _ = calcular_metricas(df_pasado, calendar.monthrange(anio_actual, mes_index - 1)[1] * 24)
-                if mttr_p > 0: delta_m = f"{avg_mttr - mttr_p:+.1f}h"
-                if acd_p > 0: delta_a = f"{acd_horas - acd_p:+.1f}h"
+                if mttr_p > 0: delta_m = f"{avg_mttr - mttr_p:+.1f} horas"
+                if acd_p > 0: delta_a = f"{acd_horas - acd_p:+.1f} horas"
                 if sla_p > 0: delta_s = f"{sla_porcentaje - sla_p:+.2f}%"
-                if d_b_p > 0: delta_dias = f"{(downtime_total / 24.0) - (d_b_p / 24.0):+.1f}d"
+                if d_b_p > 0: delta_dias = f"{(downtime_total / 24.0) - (d_b_p / 24.0):+.1f} días"
 
         # Bloque de KPIs
         st.markdown("### 🎯 Indicadores Clave de Rendimiento (KPIs)")
         k1, k2, k3, k4, k5, k6 = st.columns(6)
-        k1.metric("MTTR", f"{avg_mttr:.2f}h", delta=delta_m, delta_color="inverse")
+        k1.metric("MTTR", f"{avg_mttr:.2f} horas", delta=delta_m, delta_color="inverse")
         k2.metric("Disponibilidad", f"{sla_porcentaje:.2f}%", delta=delta_s)
-        k3.metric("ACD", f"{acd_horas:.2f}h", delta=delta_a, delta_color="inverse")
-        k4.metric("Falla Crítica", f"{max_h:.2f}h")
-        k5.metric("Afectados", f"{cl_imp} Usr")
-        k6.metric("Impacto Acum.", f"{downtime_total / 24.0:.1f}d", delta=delta_dias, delta_color="inverse")
+        k3.metric("ACD", f"{acd_horas:.2f} horas", delta=delta_a, delta_color="inverse")
+        k4.metric("Falla Crítica", f"{max_h:.2f} horas")
+        k5.metric("Afectados", f"{cl_imp} clientes")
+        k6.metric("Impacto Acum.", f"{downtime_total / 24.0:.1f} días", delta=delta_dias, delta_color="inverse")
 
         st.divider()
         st.markdown("### 🗺️ Análisis Geoespacial y Causas")
         
-        col_m1, col_m2 = st.columns([3, 2])
-        
-        with col_m1:
-            df_mapa = df_filtrado.copy()
-            df_mapa['lat'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lat'])
-            df_mapa['lon'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lon'])
-            df_map_agg = df_mapa.groupby(['zona', 'lat', 'lon']).agg(Frecuencia=('id', 'count'), Horas_Down=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
-            fig_map = px.scatter_mapbox(df_map_agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas_Down", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
-            fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0))
-            st.plotly_chart(fig_map, use_container_width=True)
+        # Mapa ocupando todo el ancho para mejor visualización
+        df_mapa = df_filtrado.copy()
+        df_mapa['lat'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lat'])
+        df_mapa['lon'] = df_mapa['zona'].apply(lambda x: COORDS_ZONAS.get(x, COORD_DEFAULT)['lon'])
+        df_map_agg = df_mapa.groupby(['zona', 'lat', 'lon']).agg(Frecuencia=('id', 'count'), Horas_Down=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
+        fig_map = px.scatter_mapbox(df_map_agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas_Down", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
+        fig_map.update_layout(margin=dict(l=0, r=0, t=0, b=0))
+        st.plotly_chart(fig_map, use_container_width=True)
 
-        with col_m2:
+        st.markdown("### 📊 Desglose de Afectaciones")
+        
+        # Fila 1 de gráficas
+        col_g1, col_g2 = st.columns(2)
+        
+        with col_g1:
             causas_cortas = {"Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra", "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía", "Corrosión en Equipos": "Corrosión", "Daños por Fauna": "Fauna", "Falla de Hardware": "Hardware", "Falla de Configuración": "Configuración", "Saturación de Tráfico": "Saturación", "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI", "Mantenimiento Programado": "Mantenimiento", "Vandalismo o Hurto": "Vandalismo", "Condiciones Climáticas": "Clima"}
             df_caus = df_filtrado.groupby('causa_raiz').size().reset_index(name='Alertas')
             df_caus['Causa_Corta'] = df_caus['causa_raiz'].map(lambda x: causas_cortas.get(x, str(x).split()[0]))
-            fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
+            fig_rca = px.pie(df_caus, names='Causa_Corta', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP, title="Causas Principales")
             fig_rca.update_traces(textposition='inside', textinfo='percent+label', textfont_size=14)
-            fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=0, b=0), paper_bgcolor="rgba(0,0,0,0)")
+            fig_rca.update_layout(showlegend=False, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_rca, use_container_width=True)
 
-        st.markdown("### 📊 Desglose de Afectaciones")
-        col_g1, col_g2, col_g3 = st.columns(3)
-        
-        with col_g1:
+        with col_g2:
             df_req = df_filtrado.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos', ascending=True)
             fig_eq = px.bar(df_req, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#29b09d'])
             fig_eq.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
             st.plotly_chart(fig_eq, use_container_width=True)
 
-        with col_g2:
+        # Fila 2 de gráficas
+        col_g3, col_g4 = st.columns(2)
+        
+        with col_g3:
             df_serv = df_filtrado.groupby('servicio').size().reset_index(name='Eventos')
             fig_serv = px.bar(df_serv, x='Eventos', y='servicio', orientation='h', title="Por Servicio", color='servicio', color_discrete_sequence=PALETA_CORP)
             fig_serv.update_layout(showlegend=False, margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
             st.plotly_chart(fig_serv, use_container_width=True)
 
-        with col_g3:
+        with col_g4:
             df_trend = df_filtrado.groupby('fecha_convertida').size().reset_index(name='Eventos')
             fig_trend = px.area(df_trend, x='fecha_convertida', y='Eventos', title="Tendencia Diaria", color_discrete_sequence=['#0068c9'])
             fig_trend.update_layout(margin=dict(l=0, r=0, t=30, b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
@@ -301,7 +293,7 @@ with tab2:
                     final_h = h_f.strftime("%H:%M:%S")
                 else:
                     final_h = None
-                    st.info("ℹ️ Al no asignar hora de cierre, la incidencia quedará como ACTIVA.")
+                    st.info("ℹ️ Al no asignar hora de cierre, la incidencia no calculará duración.")
 
             duracion = 0
             desc_conocimiento = "Total" if hora_inicio_final and final_h else "Parcial"
