@@ -153,7 +153,7 @@ with st.sidebar:
         h_i = c2.time_input("🕒 Hora de Apertura")
         hora_inicio_final = h_i.strftime("%H:%M:%S")
     else:
-        hora_inicio_final = "N/A"
+        hora_inicio_final = None
 
     st.info("ℹ️ Si omite la hora, se considerará 'N/A' y la duración contable será 0 horas.")
 
@@ -168,7 +168,7 @@ with st.sidebar:
         h_f = c_c2.time_input("🕒 Hora de Cierre")
         final_h = h_f.strftime("%H:%M:%S")
     else:
-        final_h = "N/A"
+        final_h = None
 
     st.info("ℹ️ Si omite la hora, se considerará 'N/A' y la duración contable será 0 horas.")
 
@@ -240,9 +240,9 @@ with st.sidebar:
                     "servicio": servicio,
                     "categoria": categoria,
                     "equipo": equipo,
-                    "fecha_inicio": f_i.strftime("%d/%m/%Y"),
+                    "fecha_inicio": f_i.strftime("%Y-%m-%d"),
                     "hora_inicio": hora_inicio_final,
-                    "fecha_fin": f_f.strftime("%d/%m/%Y"),
+                    "fecha_fin": f_f.strftime("%Y-%m-%d"),
                     "hora_fin": final_h,
                     "clientes": int(clientes_form),
                     "causa": causa,
@@ -269,7 +269,7 @@ try:
     df_total.columns = [c.lower() for c in df_total.columns]
 
     # Convertir fecha_inicio a datetime para filtros por mes
-    df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], dayfirst=True, errors='coerce')
+    df_total['fecha_convertida'] = pd.to_datetime(df_total['fecha_inicio'], errors='coerce')
     df_total['mes_nombre'] = df_total['fecha_convertida'].dt.month.map(
         lambda x: meses_nombres[int(x) - 1] if pd.notnull(x) else None
     )
@@ -513,15 +513,20 @@ try:
 
                                         dur_r = 0.0
                                         try:
-                                            if conoce_s == "Total" and h_i_s != "N/A" and h_f_s != "N/A":
-                                                dt_ini = datetime.strptime(f"{f_i_s} {h_i_s}", "%d/%m/%Y %H:%M:%S")
-                                                dt_fin = datetime.strptime(f"{f_f_s} {h_f_s}", "%d/%m/%Y %H:%M:%S")
+                                            if conoce_s == "Total" and h_i_s not in ["None", "N/A", "NaT", ""] and h_f_s not in ["None", "N/A", "NaT", ""]:
+                                                dt_ini = datetime.strptime(f"{f_i_s} {h_i_s}", "%Y-%m-%d %H:%M:%S")
+                                                dt_fin = datetime.strptime(f"{f_f_s} {h_f_s}", "%Y-%m-%d %H:%M:%S")
                                                 dur_r = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
                                                 if dur_r < 0: dur_r = 0.0
                                         except:
                                             dur_r = 0.0
 
                                         row_id = edit_row.get('id') or orig_row.get('id')
+                                        
+                                        # Parsear Nulos para SQL
+                                        sql_hi = None if h_i_s in ["None", "N/A", "NaT", ""] else h_i_s
+                                        sql_hf = None if h_f_s in ["None", "N/A", "NaT", ""] else h_f_s
+
                                         conn.execute(text("""
                                             UPDATE incidents SET
                                                 zona = :zona,
@@ -544,9 +549,9 @@ try:
                                             "categoria": edit_row.get('categoria', ''),
                                             "equipo": edit_row.get('equipo_afectado', ''),
                                             "fecha_inicio": f_i_s,
-                                            "hora_inicio": h_i_s,
+                                            "hora_inicio": sql_hi,
                                             "fecha_fin": f_f_s,
-                                            "hora_fin": h_f_s,
+                                            "hora_fin": sql_hf,
                                             "clientes": int(edit_row.get('clientes_afectados', 0)),
                                             "causa": edit_row.get('causa_raiz', ''),
                                             "descripcion": edit_row.get('descripcion', ''),
