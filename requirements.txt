@@ -1,6 +1,7 @@
-streamlit
+streamlit>=1.35.0
 pandas
-sqlalchemy
+SQLAlchemy
 psycopg2-binary
-python-dotenv
 plotly
+bcrypt
+fpdf2
