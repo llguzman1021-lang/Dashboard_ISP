@@ -118,7 +118,7 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =====================================================================
-# [ETIQUETA: FUNCIONES DE LOG DE AUDITORÍA Y PDF]
+# [ETIQUETA: FUNCIONES DE LOG DE AUDITORÍA Y PDF REPARADO]
 # =====================================================================
 def log_audit(action, details):
     try:
@@ -156,7 +156,14 @@ def generar_pdf_ejecutivo(mes, anio, mttr, sla, acd, clientes, d_total, df_falla
     else:
         pdf.cell(200, 8, txt="Sin incidencias registradas.", ln=True)
         
-    return pdf.output(dest='S').encode('latin-1')
+    # Corrección para compatibilidad fpdf vs fpdf2
+    try:
+        pdf_bytes = pdf.output()
+        if isinstance(pdf_bytes, str):
+            return pdf_bytes.encode('latin-1')
+        return bytes(pdf_bytes)
+    except Exception:
+        return pdf.output(dest='S').encode('latin-1')
 
 # =====================================================================
 # [ETIQUETA: VARIABLES GLOBALES Y CARGA DE DATOS]
@@ -227,7 +234,7 @@ except Exception as e:
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.1")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v9.2")
     
     anio_actual = datetime.now().year
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
@@ -401,7 +408,6 @@ if st.session_state.role == 'admin':
                         hora_inicio_final = h_i.strftime("%H:%M:%S")
                     else:
                         hora_inicio_final = None
-                        st.info("ℹ️ Al no asignar hora de inicio, el sistema no calculará duración.")
 
                 with c_t2:
                     f_f = st.date_input("📅 Fecha de Cierre")
@@ -411,7 +417,6 @@ if st.session_state.role == 'admin':
                         final_h = h_f.strftime("%H:%M:%S")
                     else:
                         final_h = None
-                        st.info("ℹ️ Al no asignar hora de cierre, no se calculará duración.")
 
                 duracion = 0
                 desc_conocimiento = "Total" if hora_inicio_final and final_h else "Parcial"
