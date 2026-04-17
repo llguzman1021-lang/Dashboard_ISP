@@ -4,12 +4,11 @@ from datetime import datetime, timedelta
 from fpdf import FPDF
 
 # =====================================================================
-# [CONFIGURACIÓN Y VARIABLES GLOBALES]
+# [CONFIGURACIÓN Y ESTILOS GLOBALES]
 # =====================================================================
 st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="🌐")
 SV_TZ = pytz.timezone('America/El_Salvador')
 
-# Paletas y Listas Globales para optimizar código
 PALETA_CORP = ['#f15c22', '#1d2c59', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b']
 MESES = ["Enero", "Febrero", "Marzo", "Abril", "Mayo", "Junio", "Julio", "Agosto", "Septiembre", "Octubre", "Noviembre", "Diciembre"]
 CAUSAS_RAIZ = ["Corte de Fibra por Terceros", "Corte de Fibra (No Especificado)", "Caída de Árboles sobre Fibra", "Falla de Energía Comercial", "Corrosión en Equipos", "Daños por Fauna", "Falla de Hardware", "Falla de Configuración", "Falla de Redundancia", "Saturación de Tráfico", "Saturación en Servidor UNIFI", "Falla de Inicio en UNIFI", "Mantenimiento Programado", "Vandalismo o Hurto", "Condiciones Climáticas"]
@@ -17,10 +16,13 @@ COORDS = {"Papaya Garden": [13.4925, -89.3822], "La Libertad - Conchalio": [13.4
 
 st.markdown("""
     <style>
-    div.stButton > button:first-child { border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease; }
-    div.stButton > button:first-child:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(241, 92, 34, 0.4); }
-    div[data-testid="stButton-delete"] > button:first-child { background-color: #c0392b !important; color: white !important;}
-    div[data-testid="stButton-save"] > button:first-child { background-color: #27ae60 !important; color: white !important;}
+    /* Efecto hover/sombra para TODOS los botones */
+    div.stButton > button { border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important; }
+    div.stButton > button:hover { transform: translateY(-2px); box-shadow: 0 4px 12px rgba(241, 92, 34, 0.4) !important; }
+    div[data-testid="stButton-delete"] > button { background-color: #c0392b !important; color: white !important;}
+    div[data-testid="stButton-save"] > button { background-color: #27ae60 !important; color: white !important;}
+    div.stButton > button:first-child { background-color: #0068c9; color: white; }
+    
     [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 36px !important; font-weight: 800 !important; }
     [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 16px !important; font-weight: 500 !important; }
     div[data-testid="stTabs"] { background-color: transparent; }
@@ -29,7 +31,6 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #f15c22 !important; border-color: #f15c22 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0px !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
-    .logo-container { background-color: white; border-radius: 15px; padding: 10px; display: flex; justify-content: center; margin-bottom: 20px; }
     </style>
     """, unsafe_allow_html=True)
 
@@ -139,12 +140,16 @@ if not st.session_state.logged_in:
     st.markdown("<div style='margin-top: 10vh;'></div>", unsafe_allow_html=True)
     _, c2, _ = st.columns([1, 1.2, 1])
     with c2:
-        try: st.markdown("<div class='logo-container'><img src='logo.png' width='200'></div>", unsafe_allow_html=True)
-        except: pass
         if st.session_state.log_msg: st.toast(st.session_state.log_msg, icon="✅"); st.session_state.log_msg = ""
         if st.session_state.log_err: st.error(st.session_state.log_err); st.session_state.log_err = ""
         with st.container(border=True):
-            st.markdown("<h3 style='text-align: center;'>🔐 Acceso NOC Central</h3><br>", unsafe_allow_html=True)
+            # LOGO EN LOGIN REEMPLAZANDO EL CANDADO
+            col_l1, col_l2, col_l3 = st.columns([1, 1.5, 1])
+            with col_l2:
+                try: st.image("logo.png", use_container_width=True)
+                except: st.markdown("<h2 style='text-align: center; color: #f15c22;'>MULTINET</h2>", unsafe_allow_html=True)
+            st.markdown("<h3 style='text-align: center;'>Acceso NOC Central</h3><br>", unsafe_allow_html=True)
+            
             st.text_input("Usuario", key="log_u")
             st.text_input("Contraseña", type="password", key="log_p")
             st.button("Iniciar Sesión", type="primary", on_click=do_login)
@@ -169,13 +174,10 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =====================================================================
-# [SIDEBAR Y EXTRACCIÓN DE DATOS GLOBALES]
+# [SIDEBAR Y EXTRACCIÓN DE DATOS]
 # =====================================================================
 with st.sidebar:
-    try: st.markdown("<div class='logo-container'><img src='app/static/logo.png' width='180' onerror=\"this.src='logo.png'\"></div>", unsafe_allow_html=True)
-    except: pass
-    st.caption(f"Usuario: **{st.session_state.username}** | v12.1")
-    
+    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v12.2")
     anio_act = datetime.now(SV_TZ).year
     anios = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
     a_sel = st.selectbox("🗓️ Ciclo Anual", anios, index=anios.index(anio_act))
@@ -190,14 +192,13 @@ with st.sidebar:
         df_m['duracion_horas'] = pd.to_numeric(df_m['duracion_horas'], errors='coerce').fillna(0)
         df_m['clientes_afectados'] = pd.to_numeric(df_m['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     
-    st.divider(); st.markdown("### 📉 Resumen Ejecutivo")
+    st.divider()
     if not df_m.empty:
         dt, acds, slas, mttrs, cls, mhs = calc_kpis(df_m, d_mes * 24)
-        st.metric("Promedio Resolución", f"{mttrs:.2f} hrs")
-        st.metric("Total Afectados", f"{cls} usr")
-        st.divider()
-        st.download_button("📥 Reporte PDF", generar_pdf(m_sel, a_sel, mttrs, slas, acds, cls, dt/24.0, df_m), f"NOC_{m_sel}_{a_sel}.pdf", "application/pdf", use_container_width=True)
-    else: st.info("Sin datos registrados.")
+        pdf_data = generar_pdf(m_sel, a_sel, mttrs, slas, acds, cls, dt/24.0, df_m)
+        st.download_button(label="📥 Descargar Reporte PDF", data=pdf_data, file_name=f"Reporte_NOC_{m_sel}_{a_sel}.pdf", mime="application/pdf", use_container_width=True)
+    else:
+        st.info("Sin datos registrados.")
         
     st.divider()
     if st.button("🚪 Cerrar Sesión", use_container_width=True): log_audit("LOGOUT", "Sesión cerrada."); st.session_state.clear(); st.rerun()
@@ -205,7 +206,7 @@ with st.sidebar:
 # =====================================================================
 # [ESTRUCTURA DE PESTAÑAS Y DASHBOARD]
 # =====================================================================
-pestanas = ["📊 Dashboard"] + (["📝 Ingreso", "🔐 Auditoría", "👥 Accesos"] if st.session_state.role == 'admin' else [])
+pestanas = ["📊 Dashboard"] + (["📝 Ingreso", "🗂️ Auditoría BD", "👥 Usuarios y Logs"] if st.session_state.role == 'admin' else [])
 tabs = st.tabs(pestanas)
 
 with tabs[0]:
@@ -225,54 +226,72 @@ with tabs[0]:
                 if slap > 0: ds = f"{sla - slap:+.2f}%"
                 if dbp > 0: dd = f"{(dt/24.0) - (dbp/24.0):+.1f} días"
 
-        k1, k2, k3 = st.columns(3); k4, k5, k6 = st.columns(3)
+        st.markdown("### 🎯 Indicadores Clave de Rendimiento (KPIs)")
+        # Columnas para centrar visualmente los KPIs
+        _, k1, k2, k3, _ = st.columns([0.5, 2, 2, 2, 0.5])
         k1.metric("MTTR", f"{mttr:.2f} hrs", dm, "inverse", help="Tiempo Promedio de Resolución")
         k2.metric("Disponibilidad (SLA)", f"{sla:.2f}%", ds, help="Nivel integral de servicio")
         k3.metric("Afectación Cliente (ACD)", f"{acdh:.2f} hrs", da, "inverse", help="Horas promedio de interrupción")
+        
+        st.write("")
+        _, k4, k5, k6, _ = st.columns([0.5, 2, 2, 2, 0.5])
         k4.metric("Falla Crítica", f"{mh:.2f} hrs")
         k5.metric("Afectados", f"{cl} usuarios")
         k6.metric("Impacto Acumulado", f"{dt/24.0:.1f} días", dd, "inverse")
+        
+        # Mensaje Restaurado
         st.caption("ℹ️ **Nota sobre Clientes Afectados:** La cantidad mostrada es una estimación base cuando no se cuenta con el dato exacto para no alterar promedios.")
         st.divider()
 
-        c_m1, c_m2 = st.columns([3, 2])
-        with c_m1:
-            df_map = df_m.copy()
-            df_map['lat'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["Servidores Gabriela Mistral"])[0])
-            df_map['lon'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["Servidores Gabriela Mistral"])[1])
-            agg = df_map.groupby(['zona', 'lat', 'lon']).agg(Horas=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
-            fig_m = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
-            fig_m.add_trace(go.Scattermapbox(mode="lines", lat=[13.5850, 13.4900, 13.3039], lon=[-89.2890, -89.3245, -88.9450], line=dict(width=2, color='rgba(241, 92, 34, 0.7)'), name="Troncal Sur"))
-            fig_m.update_layout(margin=dict(l=0, r=0, t=0, b=0)); st.plotly_chart(fig_m, use_container_width=True)
-        with c_m2:
-            cc = {"Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra", "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía", "Corrosión en Equipos": "Corrosión", "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI", "Condiciones Climáticas": "Clima"}
-            dc = df_m.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=False)
-            dc['Causa'] = dc['causa_raiz'].map(lambda x: cc.get(x, str(x).split()[0]))
-            fig_p = px.pie(dc, names='Causa', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
-            fig_p.update_traces(textinfo='percent+label', hoverinfo='label+value'); fig_p.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
-            sel_p = st.plotly_chart(fig_p, use_container_width=True, on_select="rerun", selection_mode="points")
+        # Gráficas Apiladas Verticalmente para mejor lectura
+        st.markdown("### 🗺️ Análisis Geoespacial y Causas Principales")
+        df_map = df_m.copy()
+        df_map['lat'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["Servidores Gabriela Mistral"])[0])
+        df_map['lon'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["Servidores Gabriela Mistral"])[1])
+        agg = df_map.groupby(['zona', 'lat', 'lon']).agg(Horas=('duracion_horas', 'sum'), Clientes=('clientes_afectados', 'sum')).reset_index()
+        fig_m = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
+        fig_m.add_trace(go.Scattermapbox(mode="lines", lat=[13.5850, 13.4900, 13.3039], lon=[-89.2890, -89.3245, -88.9450], line=dict(width=2, color='rgba(241, 92, 34, 0.7)'), name="Troncal Sur"))
+        fig_m.update_layout(margin=dict(l=0, r=0, t=0, b=0)); st.plotly_chart(fig_m, use_container_width=True)
+
+        st.write("")
+        cc = {"Corte de Fibra por Terceros": "Terceros", "Corte de Fibra (No Especificado)": "Fibra", "Caída de Árboles sobre Fibra": "Árboles", "Falla de Energía Comercial": "Energía", "Corrosión en Equipos": "Corrosión", "Saturación en Servidor UNIFI": "Sat. UNIFI", "Falla de Inicio en UNIFI": "Inic. UNIFI", "Condiciones Climáticas": "Clima"}
+        dc = df_m.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=False)
+        dc['Causa'] = dc['causa_raiz'].map(lambda x: cc.get(x, str(x).split()[0]))
+        fig_p = px.pie(dc, names='Causa', values='Alertas', hole=0.4, color_discrete_sequence=PALETA_CORP)
+        fig_p.update_traces(textinfo='percent+label', hoverinfo='label+value'); fig_p.update_layout(showlegend=False, margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
         
+        # Pastel centrado para que no sea inmenso
+        _, c_pie, _ = st.columns([1, 2, 1])
+        with c_pie:
+            sel_p = st.plotly_chart(fig_p, use_container_width=True, on_select="rerun", selection_mode="points")
         if sel_p and sel_p.selection.point_indices:
             cx = dc.iloc[sel_p.selection.point_indices[0]]['Causa']
-            st.info(f"🔍 **Detalle:** '{cx}'"); st.dataframe(df_m[df_m['causa_raiz'].map(lambda x: cc.get(x, str(x).split()[0])) == cx][['fecha_inicio', 'zona', 'equipo_afectado', 'duracion_horas']], hide_index=True)
+            st.info(f"🔍 **Detalle:** '{cx}'"); st.dataframe(df_m[df_m['causa_raiz'].map(lambda x: cc.get(x, str(x).split()[0])) == cx][['fecha_inicio', 'zona', 'equipo_afectado', 'duracion_horas', 'descripcion']], hide_index=True)
 
-        cg1, cg2 = st.columns(2)
-        with cg1:
-            de = df_m.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos')
-            fe = px.bar(de, x='Fallos', y='equipo_afectado', orientation='h', title="Por Equipo", color_discrete_sequence=['#f15c22'], text_auto='.0f')
-            fe.update_traces(textposition='outside'); fe.update_layout(margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
-            st.plotly_chart(fe, use_container_width=True)
-        with cg2:
-            dt_trend = df_m.copy()
-            dt_trend['Dia'] = pd.to_datetime(dt_trend['fecha_convertida']).dt.day
-            da = dt_trend.groupby('Dia').size().reset_index(name='Eventos'); da['Mes'] = 'Actual'
-            if m_idx > 1 and not df_p.empty:
-                dp = df_p.copy()
-                dp['Dia'] = pd.to_datetime(dp['fecha_inicio'], errors='coerce').dt.day
-                dpa = dp.groupby('Dia').size().reset_index(name='Eventos'); dpa['Mes'] = 'Anterior'
-                da = pd.concat([da, dpa])
-            ft = px.line(da, x='Dia', y='Eventos', color='Mes', title="Tendencia (vs Ant.)", color_discrete_map={"Actual": "#f15c22", "Anterior": "rgba(255,255,255,0.3)"}, markers=True)
-            ft.update_layout(margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Día", yaxis_title="Fallas"); st.plotly_chart(ft, use_container_width=True)
+        st.divider()
+        st.markdown("### 📊 Desglose de Afectaciones por Equipo y Servicio")
+        de = df_m.groupby('equipo_afectado').size().reset_index(name='Fallos').sort_values('Fallos')
+        fe = px.bar(de, x='Fallos', y='equipo_afectado', orientation='h', color_discrete_sequence=['#f15c22'], text_auto='.0f')
+        fe.update_traces(textposition='outside'); fe.update_layout(margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
+        st.plotly_chart(fe, use_container_width=True)
+
+        ds = df_m.groupby('servicio').size().reset_index(name='Eventos').sort_values('Eventos')
+        fs = px.bar(ds, x='Eventos', y='servicio', orientation='h', color='servicio', color_discrete_sequence=PALETA_CORP, text_auto='.0f')
+        fs.update_traces(textposition='outside'); fs.update_layout(showlegend=False, margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="", yaxis_title="")
+        st.plotly_chart(fs, use_container_width=True)
+
+        st.divider()
+        st.markdown("### 📈 Análisis Temporal")
+        dt_trend = df_m.copy()
+        dt_trend['Dia'] = pd.to_datetime(dt_trend['fecha_convertida']).dt.day
+        da = dt_trend.groupby('Dia').size().reset_index(name='Eventos'); da['Mes'] = 'Actual'
+        if m_idx > 1 and not df_p.empty:
+            dp = df_p.copy()
+            dp['Dia'] = pd.to_datetime(dp['fecha_inicio'], errors='coerce').dt.day
+            dpa = dp.groupby('Dia').size().reset_index(name='Eventos'); dpa['Mes'] = 'Anterior'
+            da = pd.concat([da, dpa])
+        ft = px.line(da, x='Dia', y='Eventos', color='Mes', color_discrete_map={"Actual": "#f15c22", "Anterior": "rgba(255,255,255,0.3)"}, markers=True)
+        ft.update_layout(margin=dict(l=0,r=0,t=30,b=0), paper_bgcolor="rgba(0,0,0,0)", xaxis_title="Día", yaxis_title="Fallas"); st.plotly_chart(ft, use_container_width=True)
             
         dg = df_m.dropna(subset=['fecha_inicio', 'hora_inicio', 'fecha_fin', 'hora_fin']).copy()
         if not dg.empty:
@@ -287,6 +306,7 @@ with tabs[0]:
 # ---------------------------------------------------------------------
 if st.session_state.role == 'admin':
     with tabs[1]:
+        st.title("📝 Ingreso Operativo")
         cf, ccx = st.columns([2, 1], gap="large")
         with cf:
             with st.container(border=True):
@@ -294,7 +314,7 @@ if st.session_state.role == 'admin':
                 c1, c2 = st.columns(2)
                 s = c1.selectbox("🌐 Servicio", ["Internet", "Cable TV", "IPTV"])
                 cat = c2.selectbox("🏢 Segmento", ["Red Multinet", "Cliente Corporativo"])
-                eq = st.selectbox("🖥️ Equipo", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP", "Sistema UNIFI"])
+                eq = st.selectbox("🖥️ Equipo", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP", "Sistema UNIFI", "Antenas"])
                 st.divider()
                 ct1, ct2 = st.columns(2)
                 with ct1:
@@ -332,16 +352,17 @@ if st.session_state.role == 'admin':
                     with st.container(border=True): st.markdown(f"**📍 {r['zona']}**"); st.caption(f"🔧 {r['causa_raiz'][:20]}... | ⏳ {r['duracion_horas']}h")
 
     with tabs[2]:
-        c_tit, c_pag = st.columns([6, 1])
-        c_tit.markdown("### 🗂️ Auditoría BD")
+        st.markdown("### 🗂️ Auditoría de Base de Datos")
         if df_m.empty: st.info("No hay datos.")
         else:
-            c_s, _ = st.columns([4, 1])
+            # Alineación del buscador y paginador
+            c_s, c_p = st.columns([4, 1])
             bq = c_s.text_input("🔎 Buscar:", placeholder="Filtrar...")
             df_d = df_m[df_m.astype(str).apply(lambda x: x.str.contains(bq, case=False, na=False)).any(axis=1)].copy() if bq else df_m.copy()
             
             tot_p = max(1, math.ceil(len(df_d) / 15))
-            pg = c_pag.number_input("Página", 1, tot_p, 1, key="p_bd")
+            pg = c_p.number_input("Página", 1, tot_p, 1, key="p_bd")
+            
             df_p = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_p.insert(0, "Sel", False)
             
@@ -352,11 +373,11 @@ if st.session_state.role == 'admin':
             
             if not f_del.empty or h_cam:
                 cb1, cb2 = st.columns(2)
-                if not f_del.empty and cb1.button("🗑️ Eliminar", type="primary", use_container_width=True):
+                if not f_del.empty and cb1.button("🗑️ Eliminar Seleccionados", type="primary", use_container_width=True):
                     with engine.begin() as cn:
                         for rid in f_del['id']: cn.execute(text("DELETE FROM incidents WHERE id=:id"), {"id": int(rid)})
                     log_audit("DELETE", f"Eliminados {len(f_del)} regs."); load_data_mes.clear(m_idx, a_sel); st.toast("Eliminados", icon="✅"); time.sleep(1); st.rerun()
-                if h_cam and cb2.button("💾 Guardar", type="primary", use_container_width=True):
+                if h_cam and cb2.button("💾 Guardar Cambios", type="primary", use_container_width=True):
                     with engine.begin() as cn:
                         for i, r in ed_df.iterrows():
                             o = df_p.drop(columns=[c for c in ['fecha_convertida','mes_nombre','lat','lon','Sel'] if c in df_p], errors='ignore').iloc[i]
@@ -364,8 +385,10 @@ if st.session_state.role == 'admin':
                     log_audit("UPDATE", "Registros editados."); load_data_mes.clear(m_idx, a_sel); st.toast("Guardado", icon="✅"); time.sleep(1); st.rerun()
             st.divider()
             c_e1, c_e2 = st.columns(2)
-            with c_e1: st.download_button("📥 CSV Crudo", df_d.to_csv(index=False).encode(), f"NOC_{m_sel}.csv", "text/csv", use_container_width=True)
-            with c_e2: st.download_button("📥 PDF Ejecutivo", generar_pdf(m_sel, a_sel, mttrs, slas, acds, cls, dt/24.0, df_m), f"NOC_{m_sel}.pdf", "application/pdf", use_container_width=True)
+            with c_e1: st.download_button("📥 Descargar archivo CSV", df_d.to_csv(index=False).encode(), f"NOC_{m_sel}.csv", "text/csv", use_container_width=True)
+            with c_e2:
+                dt, acds, slas, mttrs, cls, mhs = calc_kpis(df_m, d_mes * 24)
+                st.download_button("📥 Descargar archivo PDF", generar_pdf(m_sel, a_sel, mttrs, slas, acds, cls, dt/24.0, df_m), f"NOC_{m_sel}.pdf", "application/pdf", use_container_width=True)
 
     with tabs[3]:
         cu, clg = st.columns([1, 2], gap="large")
@@ -379,6 +402,34 @@ if st.session_state.role == 'admin':
                         st.toast(f"Creado {nu}", icon="✅"); time.sleep(1); st.rerun()
                     except: st.toast("Error: Usuario duplicado", icon="❌")
         with clg:
+            # Tabla de Administrar Usuarios
+            st.markdown("#### 📋 Panel de Usuarios Activos")
+            try:
+                with engine.connect() as cn:
+                    df_usrs = pd.read_sql(text("SELECT id, username, role, is_banned, failed_attempts FROM users"), cn)
+                df_usrs.insert(0, "Seleccionar", False)
+                ed_usrs = st.data_editor(df_usrs, column_config={"Seleccionar": st.column_config.CheckboxColumn("✔", default=False), "id": None, "username": "Usuario", "role": "Rol", "is_banned": "Baneado", "failed_attempts": "Intentos Fallidos"}, use_container_width=True, hide_index=True)
+                
+                filas_usr_del = ed_usrs[ed_usrs["Seleccionar"] == True]
+                hay_cambios_usr = not df_usrs.drop(columns=['Seleccionar']).reset_index(drop=True).equals(ed_usrs.drop(columns=['Seleccionar']).reset_index(drop=True))
+                
+                if not filas_usr_del.empty or hay_cambios_usr:
+                    cu1, cu2 = st.columns(2)
+                    if not filas_usr_del.empty and cu1.button("🗑️ Eliminar Usuarios", type="primary", use_container_width=True):
+                        if "Admin" in filas_usr_del['username'].values: st.error("❌ No se puede eliminar a Admin.")
+                        else:
+                            with engine.begin() as conn:
+                                for rid in filas_usr_del['id']: conn.execute(text("DELETE FROM users WHERE id = :id"), {"id": int(rid)})
+                            st.toast("Usuarios eliminados.", icon="✅"); time.sleep(1); st.rerun()
+                    if hay_cambios_usr and cu2.button("💾 Guardar Permisos", type="primary", use_container_width=True):
+                        with engine.begin() as conn:
+                            for i, e_row in ed_usrs.iterrows():
+                                o_row = df_usrs.drop(columns=['Seleccionar']).iloc[i]
+                                if not o_row.equals(e_row): conn.execute(text("UPDATE users SET role=:r, is_banned=:b, failed_attempts=:f WHERE id=:id"), {"r": str(e_row['role']), "b": bool(e_row['is_banned']), "f": int(e_row['failed_attempts']), "id": int(e_row['id'])})
+                        st.toast("Permisos actualizados.", icon="✅"); time.sleep(1); st.rerun()
+            except Exception as e: st.info(f"Error cargando usuarios: {e}")
+            
+            st.divider()
             c_lt, c_lp = st.columns([4, 1])
             c_lt.markdown("#### 📜 Registro de Actividad (Logs)")
             try:
