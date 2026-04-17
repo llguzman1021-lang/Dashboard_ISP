@@ -299,22 +299,32 @@ try:
     df_total['duracion_horas'] = pd.to_numeric(df_total['duracion_horas'], errors='coerce').fillna(0)
     df_total['clientes_afectados'] = pd.to_numeric(df_total['clientes_afectados'], errors='coerce').fillna(0).astype(int)
 
-    # --- PANEL DE DIAGNÓSTICO (visible solo si hay fechas sin parsear) ---
+    # --- PANEL DE DIAGNÓSTICO AVANZADO (SIEMPRE VISIBLE) ---
     fechas_sin_parsear = df_total[df_total['fecha_convertida'].isna()]
-    if not fechas_sin_parsear.empty:
-        with st.expander(f"⚠️ Diagnóstico: {len(fechas_sin_parsear)} registros con fecha no reconocida", expanded=True):
-            st.warning("Los siguientes registros tienen un formato de fecha que el sistema no pudo interpretar. Verifique el campo `fecha_inicio`:")
-            st.dataframe(fechas_sin_parsear[['id', 'fecha_inicio', 'worksheet_name']].head(20), use_container_width=True)
-
     meses_detectados = df_total['mes_nombre'].dropna().unique().tolist()
-    with st.sidebar:
-        with st.expander("🔍 Debug: Meses detectados en BD"):
-            st.write(f"**Total registros:** {len(df_total)}")
-            st.write(f"**Meses con datos:** {sorted(meses_detectados)}")
-            st.write(f"**Registros sin fecha válida:** {len(fechas_sin_parsear)}")
-            if not df_total.empty:
-                st.write("**Muestra de fechas (primeros 5):**")
-                st.write(df_total[['id','fecha_inicio','fecha_convertida','mes_nombre']].head(5))
+
+    with st.expander(f"🔍 DIAGNÓSTICO DE DATOS — Total en BD: {len(df_total)} registros | Meses detectados: {sorted(meses_detectados)}", expanded=True):
+        st.write("### Valores únicos de `fecha_inicio` en la BD (primeros 30):")
+        unique_dates = df_total['fecha_inicio'].dropna().unique()[:30]
+        st.write(list(unique_dates))
+
+        st.write("### Parseo de las primeras 20 fechas:")
+        muestra = df_total[['id','worksheet_name','fecha_inicio','fecha_convertida','mes_nombre']].head(20)
+        st.dataframe(muestra, use_container_width=True)
+
+        st.write("### Registros con worksheet_name que contiene 'abril' (case-insensitive):")
+        mask_abril_ws = df_total['worksheet_name'].astype(str).str.lower().str.contains('abril', na=False)
+        df_abril_raw = df_total[mask_abril_ws][['id','worksheet_name','fecha_inicio','fecha_convertida','mes_nombre']].head(20)
+        if df_abril_raw.empty:
+            st.warning("⚠️ No hay registros con 'abril' en worksheet_name. Valores únicos de worksheet_name:")
+            st.write(df_total['worksheet_name'].unique().tolist())
+        else:
+            st.success(f"✅ {len(df_abril_raw)} registros encontrados con 'abril' en worksheet_name")
+            st.dataframe(df_abril_raw, use_container_width=True)
+
+        st.write(f"### Buscando mes seleccionado: **'{mes_seleccionado}'** en columna mes_nombre")
+        st.write(f"Meses disponibles en df_total: `{sorted(meses_detectados)}`")
+        st.write(f"Registros sin fecha válida: {len(fechas_sin_parsear)}")
 
     df_mes = df_total[df_total['mes_nombre'] == mes_seleccionado].copy()
 
