@@ -32,18 +32,19 @@ st.markdown("""
     """, unsafe_allow_html=True)
 
 # =====================================================================
-# [ETIQUETA: SISTEMA DE LOGIN Y ROLES]
+# [ETIQUETA: SISTEMA DE LOGIN, ROLES Y RECUPERACIÓN NATIVA]
 # =====================================================================
 if 'logged_in' not in st.session_state:
     st.session_state.logged_in = False
     st.session_state.role = None
     st.session_state.username = None
 
-# Credenciales de demostración
-USUARIOS = {
-    "admin": {"pass": "admin123", "role": "admin"},
-    "viewer": {"pass": "view123", "role": "viewer"}
-}
+# Base de datos local de usuarios en memoria (con preguntas de seguridad)
+if 'USUARIOS' not in st.session_state:
+    st.session_state.USUARIOS = {
+        "admin": {"pass": "admin123", "role": "admin", "pregunta": "¿Cuál es tu color favorito?", "respuesta": "azul"},
+        "viewer": {"pass": "view123", "role": "viewer", "pregunta": "¿Qué animal es tu mascota?", "respuesta": "perro"}
+    }
 
 if not st.session_state.logged_in:
     st.markdown("<div style='margin-top: 10vh;'></div>", unsafe_allow_html=True)
@@ -57,23 +58,38 @@ if not st.session_state.logged_in:
             pass_input = st.text_input("Contraseña", type="password")
             
             if st.button("Iniciar Sesión", type="primary"):
-                if user_input in USUARIOS and USUARIOS[user_input]["pass"] == pass_input:
+                if user_input in st.session_state.USUARIOS and st.session_state.USUARIOS[user_input]["pass"] == pass_input:
                     st.session_state.logged_in = True
-                    st.session_state.role = USUARIOS[user_input]["role"]
+                    st.session_state.role = st.session_state.USUARIOS[user_input]["role"]
                     st.session_state.username = user_input
                     st.rerun()
                 else:
                     st.error("Credenciales incorrectas.")
             
-            # --- NUEVO: Recuperación de contraseña ---
+            # --- MEJORA: Recuperación de contraseña con Preguntas de Seguridad ---
             with st.expander("¿Olvidó su contraseña?"):
-                st.markdown("<small>Ingrese su correo corporativo para recibir instrucciones de recuperación.</small>", unsafe_allow_html=True)
-                correo_rec = st.text_input("Correo electrónico", placeholder="usuario@multinet.com")
-                if st.button("Solicitar Restablecimiento"):
-                    if correo_rec and "@" in correo_rec:
-                        st.success(f"✅ Se ha enviado un enlace de recuperación a: {correo_rec}")
-                    else:
-                        st.error("⚠️ Ingrese un correo corporativo válido.")
+                st.markdown("<small>Recuperación nativa mediante pregunta de seguridad.</small>", unsafe_allow_html=True)
+                rec_user = st.text_input("Ingrese su nombre de usuario:")
+                
+                if rec_user in st.session_state.USUARIOS:
+                    pregunta_secreta = st.session_state.USUARIOS[rec_user]["pregunta"]
+                    st.info(f"**Pregunta de seguridad:** {pregunta_secreta}")
+                    rec_resp = st.text_input("Su respuesta:", type="password")
+                    
+                    if rec_resp:
+                        if rec_resp.strip().lower() == st.session_state.USUARIOS[rec_user]["respuesta"].lower():
+                            st.success("✅ Identidad verificada.")
+                            new_pass = st.text_input("Escriba su nueva contraseña:", type="password")
+                            if st.button("Actualizar Contraseña"):
+                                if new_pass:
+                                    st.session_state.USUARIOS[rec_user]["pass"] = new_pass
+                                    st.success("🎉 Contraseña actualizada con éxito. Ya puede iniciar sesión arriba.")
+                                else:
+                                    st.error("La contraseña no puede estar vacía.")
+                        else:
+                            st.error("❌ Respuesta incorrecta.")
+                elif rec_user:
+                    st.error("Usuario no encontrado en el sistema.")
     st.stop() # Detiene la ejecución si no hay login
 
 # =====================================================================
@@ -146,7 +162,7 @@ def calcular_metricas(df_kpi, horas_rango_total):
 # =====================================================================
 with st.sidebar:
     st.title("🏢 Centro de Operaciones")
-    st.caption(f"Usuario: {st.session_state.username} | Enterprise v8.0")
+    st.caption(f"Usuario: {st.session_state.username} | Enterprise v8.1")
     
     anio_actual = datetime.now().year
     mes_seleccionado = st.selectbox("📅 Ciclo de Análisis Mensual", meses_nombres, index=datetime.now().month - 1)
@@ -366,15 +382,21 @@ if st.session_state.role == 'admin':
 
         with col_contexto:
             st.markdown("#### 🕒 Actividad Reciente")
-            st.caption(f"Últimos registros ingresados en {mes_seleccionado}.")
-            if df_mes.empty:
-                st.info("Aún no hay registros en este mes.")
-            else:
-                df_reciente = df_mes.tail(5).sort_values(by='id', ascending=False)
-                for _, row in df_reciente.iterrows():
-                    with st.container(border=True):
-                        st.markdown(f"**📍 {row['zona']}**")
-                        st.caption(f"🔧 {row['causa_raiz'][:25]}... | ⏳ {row['duracion_horas']}h")
+            st.caption(f"Últimos registros ingresados en BD.")
+            
+            # Usar load_data completo (solo ID, zona, causa y duracion) para el listado global rápido
+            try:
+                with engine.connect() as conn:
+                    df_reciente = pd.read_sql(text("SELECT id, zona, causa_raiz, duracion_horas FROM incidents ORDER BY id DESC LIMIT 5"), conn)
+                if df_reciente.empty:
+                    st.info("Aún no hay registros.")
+                else:
+                    for _, row in df_reciente.iterrows():
+                        with st.container(border=True):
+                            st.markdown(f"**📍 {row['zona']}**")
+                            st.caption(f"🔧 {row['causa_raiz'][:25]}... | ⏳ {row['duracion_horas']}h")
+            except Exception as e:
+                st.info("Aún no hay registros.")
 
     with tabs[2]:
         st.title("🗂️ Auditoría de Base de Datos")
