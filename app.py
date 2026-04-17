@@ -119,7 +119,7 @@ with st.sidebar:
     servicio = c_serv1.selectbox("🌐 Servicio Principal Afectado", ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"])
     categoria = c_serv2.selectbox("🏢 Segmento de Mercado", ["Red Multinet (Troncal)", "Cliente Corporativo"])
     
-    equipo = st.selectbox("🖥️ Equipamiento de Red Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"])
+    equipo = st.selectbox("🖥️ Equipamiento de Red Afectado", ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP", "Mufa", "Splitter", "Sistema UNIFI", "Antenas Ubiquiti"])
     
     st.write("---")
     st.write("⏱️ **Registro de Tiempos: Inicio de Falla**")
@@ -187,6 +187,8 @@ with st.sidebar:
         "Desajuste de Configuración Lógica (Software/Routing)",
         "Falla de Redundancia en Anillo de Fibra",
         "Saturación de Tráfico o Cuello de Botella en la Red",
+        "Saturación de Disco en Servidor UNIFI",
+        "Problemas de Inicio en Servidor UNIFI",
         "Mantenimiento Programado o Ventana de Trabajo",
         "Vandalismo, Hurto o Sabotaje Directo",
         "Condiciones Climáticas Adversas (Tormentas, Fuertes Vientos)"
@@ -322,7 +324,7 @@ try:
                 
                 zonas_fijas = ["El Rosario", "La Costa del Sol", "La Libertad", "Rio Mar", "El Tunco", "Zaragoza", "Zacatecoluca", "San Salvador", "San Miguel Tepezontes", "ARG", "Santiago Nonualco"]
                 categorias_fijas = ["Red Multinet (Troncal)", "Cliente Corporativo"]
-                equipos_fijos = ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP"]
+                equipos_fijos = ["OLT", "RB/Mikrotik", "Switch", "ONU", "Servidor", "Fibra Principal", "Caja NAP", "Mufa", "Splitter", "Sistema UNIFI", "Antenas Ubiquiti"]
                 
                 f_zonas = col_f1.multiselect("Filtrar Zona Geográfica", options=zonas_fijas)
                 f_cats = col_f2.multiselect("Segmento Comercial", options=categorias_fijas)
