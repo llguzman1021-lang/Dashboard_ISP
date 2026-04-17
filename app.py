@@ -16,12 +16,15 @@ COORDS = {"Papaya Garden": [13.4925, -89.3822], "La Libertad - Conchalio": [13.4
 
 st.markdown("""
     <style>
-    /* Efecto hover para botones (Sin sombra naranja, pero con salto) */
-    div.stButton > button { border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important; }
+    /* Efecto hover para botones (Eliminando contornos rojos de tema y añadiendo salto) */
+    div.stButton > button { border: none !important; outline: none !important; box-shadow: none !important; border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important; }
+    div.stButton > button:focus { border: none !important; outline: none !important; box-shadow: none !important; }
     div.stButton > button:hover { transform: translateY(-2px); }
+    
+    /* Colores estáticos para botones */
     div[data-testid="stButton-delete"] > button { background-color: #c0392b !important; color: white !important;}
     div[data-testid="stButton-save"] > button { background-color: #27ae60 !important; color: white !important;}
-    div.stButton > button:first-child { background-color: #0068c9; color: white; }
+    div.stButton > button:first-child { background-color: #0068c9 !important; color: white !important; }
     
     [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 36px !important; font-weight: 800 !important; }
     [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 16px !important; font-weight: 500 !important; }
@@ -144,25 +147,24 @@ if not st.session_state.logged_in:
         if st.session_state.log_err: st.error(st.session_state.log_err); st.session_state.log_err = ""
         
         with st.container(border=True):
-            # LOGO PEQUEÑO Y TÍTULO ALINEADOS
-            col_l1, col_l2 = st.columns([1, 4])
-            with col_l1:
-                try: st.image("logo.png")
-                except: st.markdown("<h2>🌐</h2>", unsafe_allow_html=True)
-            with col_l2:
-                st.markdown("<div style='display: flex; align-items: center; height: 100%;'><h3 style='margin: 0;'>Acceso NOC Central</h3></div>", unsafe_allow_html=True)
+            # LOGO CENTRADO Y ESTILIZADO EN LA PARTE SUPERIOR
+            c_l1, c_l2, c_l3 = st.columns([1, 1.5, 1])
+            with c_l2:
+                try: st.image("logo.png", use_container_width=True)
+                except: st.markdown("<h2 style='text-align: center; color: #f15c22;'>MULTINET</h2>", unsafe_allow_html=True)
             
-            st.write("")
+            st.markdown("<h3 style='text-align: center;'>Acceso NOC Central</h3><br>", unsafe_allow_html=True)
+            
             st.text_input("Usuario", key="log_u")
             st.text_input("Contraseña", type="password", key="log_p")
             
-            # BOTÓN DE LOGIN CENTRADO
+            # BOTON CENTRADO
             st.write("")
             _, c_btn, _ = st.columns([1, 2, 1])
             with c_btn:
                 st.button("Iniciar Sesión", type="primary", on_click=do_login, use_container_width=True)
-            
             st.write("")
+            
             with st.expander("¿Olvidó su contraseña?"):
                 ru = st.text_input("Ingrese su usuario:")
                 if ru:
