@@ -64,11 +64,9 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-# Variables de estado (Incluye el nuevo sistema de Flash Messages)
 for _k, _v in [('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''), ('log_u', ''), ('log_p', ''), ('flash_msg', ''), ('flash_type', '')]:
     if _k not in st.session_state: st.session_state[_k] = _v
 
-# Lanzador de notificaciones visuales (Asegura que se vean después de un rerun)
 if st.session_state.flash_msg:
     if st.session_state.flash_type == 'error':
         st.error(st.session_state.flash_msg, icon="❌")
@@ -376,11 +374,16 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.1 (Stable)")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.2 (Stable UX)")
     st.divider()
 
+    # Cálculo dinámico del año actual para seleccionarlo por defecto
     anio_act = datetime.now(SV_TZ).year
-    a_sel = st.selectbox("🗓️ Año", sorted({anio_act+1, anio_act, anio_act-1, anio_act-2}, reverse=True), index=0)
+    anios_list = sorted({anio_act+1, anio_act, anio_act-1, anio_act-2}, reverse=True)
+    # Busca la posición del año actual para que sea el defecto (index)
+    idx_anio = anios_list.index(anio_act) if anio_act in anios_list else 0
+
+    a_sel = st.selectbox("🗓️ Año", anios_list, index=idx_anio)
     m_sel = st.selectbox("📅 Mes", MESES, index=datetime.now(SV_TZ).month - 1)
     m_idx = MESES.index(m_sel) + 1
     
@@ -599,26 +602,26 @@ if role in ('admin', 'auditor'):
                 ct1, ct2 = st.columns(2)
                 with ct1:
                     fi  = st.date_input("📅 Fecha de Inicio", key=f"fi_{fk}")
-                    hi_desc = st.checkbox("No conozco la hora de inicio", key=f"hi_desc_{fk}")
-                    if not hi_desc: hi_val = st.time_input("🕒 Hora de Inicio", key=f"hi_val_{fk}")
-                    else: hi_val = None; st.info("ℹ️ Sin hora de inicio → Evento Incompleto.")
+                    # NUEVA LÓGICA DE UX PARA LA HORA:
+                    hi_on = st.checkbox("🕒 Conozco la hora exacta de inicio", value=False, key=f"hi_on_{fk}")
+                    if hi_on: hi_val = st.time_input("Hora Exacta de Inicio", key=f"hi_val_{fk}")
+                    else: hi_val = None; st.info("ℹ️ Sin hora exacta → Evento Incompleto.")
                 
                 with ct2:
-                    # UX UI Mejora: Si está abierto, ocultamos los campos de cierre para no confundir.
                     if es_abierto:
                         ff = fi
                         hf_val = None
-                        hf_desc = True
+                        hf_on = False
                         st.warning("🚨 El ticket se guardará como 'Falla en Curso'. Podrás cerrarlo luego desde el Historial.")
                     else:
                         ff  = st.date_input("📅 Fecha de Cierre", key=f"ff_{fk}")
-                        hf_desc = st.checkbox("No conozco la hora de cierre", key=f"hf_desc_{fk}")
-                        if not hf_desc: hf_val = st.time_input("🕒 Hora de Cierre", key=f"hf_val_{fk}")
-                        else: hf_val = None; st.info("ℹ️ Sin hora de cierre → Evento Incompleto.")
+                        hf_on = st.checkbox("🕒 Conozco la hora exacta de cierre", value=False, key=f"hf_on_{fk}")
+                        if hf_on: hf_val = st.time_input("Hora Exacta de Cierre", key=f"hf_val_{fk}")
+                        else: hf_val = None; st.info("ℹ️ Sin hora exacta → Evento Incompleto.")
 
                 dur = 0.0
                 conocimiento = "Parcial"
-                if (not hi_desc) and (not hf_desc) and (not es_abierto):
+                if hi_on and hf_on and (not es_abierto):
                     dt_ini = datetime.combine(fi, hi_val)
                     dt_fin = datetime.combine(ff, hf_val)
                     if dt_fin > dt_ini:
@@ -631,7 +634,7 @@ if role in ('admin', 'auditor'):
 
                 if st.button("💾 Guardar Registro", type="primary"):
                     err = False
-                    if (not es_abierto) and (not hi_desc) and (not hf_desc) and (fi > ff or (fi == ff and hi_val >= hf_val)):
+                    if (not es_abierto) and hi_on and hf_on and (fi > ff or (fi == ff and hi_val >= hf_val)):
                         st.session_state.flash_msg = "La fecha/hora de cierre no puede ser anterior al inicio."
                         st.session_state.flash_type = "error"
                         err = True
@@ -639,10 +642,10 @@ if role in ('admin', 'auditor'):
                     if not err:
                         with st.spinner("Guardando en Base de Datos…"):
                             try:
-                                hi_db = hi_val if not hi_desc else datetime_time(0, 0)
+                                hi_db = hi_val if hi_on else datetime_time(0, 0)
                                 idi = SV_TZ.localize(datetime.combine(fi, hi_db))
                                 
-                                if es_abierto or hf_desc: idf = None
+                                if es_abierto or not hf_on: idf = None
                                 else: idf = SV_TZ.localize(datetime.combine(ff, hf_val))
                                 
                                 estado_db = 'Abierto' if es_abierto else 'Cerrado'
@@ -668,6 +671,7 @@ if role in ('admin', 'auditor'):
                             except Exception as e: 
                                 st.session_state.flash_msg = f"Error de BD: {e}"
                                 st.session_state.flash_type = "error"
+                                st.rerun()
 
         with ccx:
             st.markdown("#### 🕒 Registros Recientes")
@@ -917,9 +921,14 @@ if role == 'admin' and len(tabs) > t_idx:
                         try:
                             with engine.begin() as conn:
                                 conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES (:u,:h,:r)"), {"u": nu, "h": hash_pw(np_u), "r": nrl})
-                            st.session_state.flash_msg = "✅ Usuario creado."
+                            st.session_state.flash_msg = "✅ Usuario creado exitosamente."
                             st.rerun()
-                        except: st.toast("❌ Nombre duplicado.", icon="❌")
+                        except Exception as e:
+                            # Filtro estricto para mostrar "Duplicado" o un error de base de datos
+                            if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower():
+                                st.toast("❌ Error: Ese nombre de usuario ya existe.", icon="❌")
+                            else:
+                                st.toast(f"❌ Error interno al crear usuario: {str(e)}", icon="❌")
                 
                 with st.form("form_reset_pw", clear_on_submit=True):
                     st.markdown("**Restablecer Contraseña**")
