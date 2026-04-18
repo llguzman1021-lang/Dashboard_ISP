@@ -139,6 +139,9 @@ def clear_catalog_cache():
 # =====================================================================
 # CONEXIÓN SMARTOLT (Nuevos Endpoints Seguros)
 # =====================================================================
+# =====================================================================
+# CONEXIÓN SMARTOLT 
+# =====================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_smartolt_clients() -> dict:
     try:
@@ -149,19 +152,39 @@ def fetch_smartolt_clients() -> dict:
 
         headers = {"X-Token": api_key}
         
-        # Endpoint Maestro para sacar la lista limpia
+        # Endpoint para sacar la lista de ONUs
         url = f"{base_url}/api/onu/get_all_onus_details"
         res = requests.get(url, headers=headers, timeout=15)
         
         if res.status_code != 200:
-            return {"_error": f"Error HTTP {res.status_code}: SmartOLT denegó la conexión o el endpoint no existe."}
+            return {"_error": f"Error HTTP {res.status_code}: SmartOLT denegó la conexión."}
             
         try:
             data = res.json()
         except ValueError:
-            return {"_error": "La API no devolvió datos válidos. Verifica la URL."}
+            return {"_error": "La API no devolvió datos JSON válidos."}
             
-        onus_list = data.get("response", data) if isinstance(data, dict) else (data if isinstance(data, list) else [])
+        # --- CAZADOR DE JSON ---
+        onus_list = []
+        if isinstance(data, list):
+            onus_list = data
+        elif isinstance(data, dict):
+            # Buscamos en los nombres más comunes que usa SmartOLT
+            for key in ["response", "onus", "data", "onus_status", "msg"]:
+                if key in data and isinstance(data[key], list):
+                    onus_list = data[key]
+                    break
+                    
+        # Si la lista sigue vacía, devolvemos las llaves para ver qué nos mandó SmartOLT
+        if not onus_list:
+            if isinstance(data, dict):
+                llaves = list(data.keys())
+                # Si SmartOLT mandó un mensaje de error interno (ej. status: false)
+                if "status" in data and data["status"] is False:
+                    return {"_error": f"SmartOLT dice: {data.get('error', 'Acceso denegado o endpoint incorrecto.')}"}
+                return {"_error": f"No se encontraron ONUs. SmartOLT respondió con estas llaves: {llaves}"}
+            else:
+                return {"_error": "SmartOLT respondió vacío."}
             
         resultado = {}
         for onu in onus_list:
@@ -184,7 +207,7 @@ def get_clientes_smartolt(zona: str, equipo: str) -> int | None:
 
 def smartolt_status_badge() -> str:
     data = fetch_smartolt_clients()
-    if "_error" in data: return "🔴 SmartOLT: Sin conexión"
+    if "_error" in data: return f"🔴 {data['_error']}"
     if not data: return "🟡 SmartOLT: Sin OLTs"
     return f"🟢 SmartOLT: {len(data)} OLTs · {sum(v for v in data.values()):,} ONTs"
 
