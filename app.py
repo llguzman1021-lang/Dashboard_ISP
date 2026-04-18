@@ -20,33 +20,14 @@ SV_TZ = pytz.timezone('America/El_Salvador')
 
 PALETA_CORP = ['#f15c22', '#1d2c59', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b']
 MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
-CAUSAS_RAIZ = [
-    "Corte de Fibra por Terceros","Corte de Fibra (No Especificado)","Caída de Árboles sobre Fibra",
-    "Falla de Energía Comercial","Corrosión en Equipos","Daños por Fauna","Falla de Hardware",
-    "Falla de Configuración","Falla de Redundancia","Saturación de Tráfico",
-    "Saturación en Servidor UNIFI","Falla de Inicio en UNIFI","Mantenimiento Programado",
-    "Vandalismo o Hurto","Condiciones Climáticas"
-]
+CAUSAS_RAIZ = ["Corte de Fibra por Terceros","Corte de Fibra (No Especificado)","Caída de Árboles sobre Fibra","Falla de Energía Comercial","Corrosión en Equipos","Daños por Fauna","Falla de Hardware","Falla de Configuración","Falla de Redundancia","Saturación de Tráfico","Saturación en Servidor UNIFI","Falla de Inicio en UNIFI","Mantenimiento Programado","Vandalismo o Hurto","Condiciones Climáticas"]
 CATEGORIAS = ["Red Multinet", "Cliente Corporativo", "Falla Interna (No afecta clientes)"]
-COORDS = {
-    "Papaya Garden":             [13.4925, -89.3822],
-    "La Libertad - Conchalio":  [13.4900, -89.3245],
-    "La Libertad - Julupe":     [13.5011, -89.3300],
-    "Costa del Sol":            [13.3039, -88.9450],
-    "OLT ARG":                  [13.4880, -89.3200],
-    "La Libertad - Agroferreteria": [13.4905, -89.3210],
-    "Servidores Gabriela Mistral":  [13.7000, -89.2000],
-    "Los Blancos":              [13.3100, -88.9200],
-    "Zaragoza":                 [13.5850, -89.2890],
-}
+COORDS = {"Papaya Garden": [13.4925, -89.3822], "La Libertad - Conchalio": [13.4900, -89.3245], "La Libertad - Julupe": [13.5011, -89.3300], "Costa del Sol": [13.3039, -88.9450], "OLT ARG": [13.4880, -89.3200], "La Libertad - Agroferreteria": [13.4905, -89.3210], "Servidores Gabriela Mistral": [13.7000, -89.2000], "Los Blancos": [13.3100, -88.9200], "Zaragoza": [13.5850, -89.2890]}
 CAT_INTERNA = "Falla Interna (No afecta clientes)"
 
 st.markdown("""
     <style>
-    div.stButton > button {
-        border: none !important; outline: none !important; box-shadow: none !important;
-        border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important;
-    }
+    div.stButton > button { border: none !important; outline: none !important; box-shadow: none !important; border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important; }
     div.stButton > button:focus { border: none !important; outline: none !important; box-shadow: none !important; }
     div.stButton > button:hover { transform: translateY(-2px); }
     div[data-testid="stButton-delete"] > button { background-color: #c0392b !important; color: white !important; }
@@ -55,11 +36,7 @@ st.markdown("""
     [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 36px !important; font-weight: 800 !important; }
     [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 16px !important; font-weight: 500 !important; }
     div[data-testid="stTabs"] { background-color: transparent; }
-    button[data-baseweb="tab"] {
-        background-color: #1e1e2f !important; border-radius: 12px 12px 0 0 !important;
-        margin-right: 10px !important; padding: 16px 32px !important;
-        border: 2px solid #333 !important; border-bottom: none !important; transition: all 0.3s;
-    }
+    button[data-baseweb="tab"] { background-color: #1e1e2f !important; border-radius: 12px 12px 0 0 !important; margin-right: 10px !important; padding: 16px 32px !important; border: 2px solid #333 !important; border-bottom: none !important; transition: all 0.3s; }
     button[data-baseweb="tab"]:hover { background-color: #2a2a3f !important; }
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #f15c22 !important; border-color: #f15c22 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0 !important; }
@@ -68,12 +45,10 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =====================================================================
-# BASE DE DATOS Y AUTENTICACIÓN
+# BASE DE DATOS: AUTO-MIGRACIÓN Y ESTRUCTURA AVANZADA
 # =====================================================================
 @st.cache_resource
-def get_engine():
-    return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
-
+def get_engine(): return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
 engine = get_engine()
 
 def hash_pw(p):  return bcrypt.hashpw(p.encode(), bcrypt.gensalt()).decode()
@@ -81,39 +56,42 @@ def check_pw(p, h): return bcrypt.checkpw(p.encode(), h.encode())
 
 def init_db():
     with engine.begin() as conn:
-        conn.execute(text("""
-            ALTER TABLE users
-                ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0,
-                ADD COLUMN IF NOT EXISTS locked_until   TIMESTAMP,
-                ADD COLUMN IF NOT EXISTS is_banned      BOOLEAN DEFAULT FALSE
-        """))
-        # Crear tabla de historial de versiones para Auditoría
-        conn.execute(text("""
-            CREATE TABLE IF NOT EXISTS incidents_history (
-                id SERIAL PRIMARY KEY,
-                incident_id INT,
-                changed_by VARCHAR(50),
-                changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
-                old_data TEXT,
-                new_data TEXT
-            )
-        """))
+        # 1. Mejoras de Seguridad de Usuario
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0, ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP, ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;"))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS incidents_history (id SERIAL PRIMARY KEY, incident_id INT, changed_by VARCHAR(50), changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, old_data TEXT, new_data TEXT)"))
+        
+        # 2. AUTO-MIGRACIÓN DE ESTRUCTURA: Unificación de Tiempos y Soft Deletes
+        conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS inicio_incidente TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS fin_incidente TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;"))
+        
+        # Transfiere datos viejos (strings) a los nuevos Timestamps nativos de Postgres
+        conn.execute(text("UPDATE incidents SET inicio_incidente = (fecha_inicio || ' ' || COALESCE(hora_inicio, '00:00:00'))::timestamp AT TIME ZONE 'America/El_Salvador' WHERE inicio_incidente IS NULL AND fecha_inicio IS NOT NULL AND fecha_inicio != ''"))
+        conn.execute(text("UPDATE incidents SET fin_incidente = (fecha_fin || ' ' || COALESCE(hora_fin, '00:00:00'))::timestamp AT TIME ZONE 'America/El_Salvador' WHERE fin_incidente IS NULL AND fecha_fin IS NOT NULL AND fecha_fin != '' AND hora_fin IS NOT NULL AND hora_fin != ''"))
+
+        # 3. CREACIÓN DE CMDB (Inventario Nodos)
+        conn.execute(text("CREATE TABLE IF NOT EXISTS inventario_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(100), equipo VARCHAR(100), clientes INT DEFAULT 0, UNIQUE(zona, equipo));"))
+        # Auto-poblar CMDB aprendiendo de los datos históricos máximos
+        conn.execute(text("INSERT INTO inventario_nodos (zona, equipo, clientes) SELECT zona, equipo_afectado, MAX(clientes_afectados) FROM incidents WHERE clientes_afectados > 0 AND zona IS NOT NULL AND equipo_afectado IS NOT NULL GROUP BY zona, equipo_afectado ON CONFLICT (zona, equipo) DO NOTHING;"))
+
+        # Usuarios base
         if conn.execute(text("SELECT count(*) FROM users WHERE username='Admin'")).scalar() == 0:
             conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES ('Admin',:h,'admin','¿Color favorito?','azul')"), {"h": hash_pw("Areakde5")})
         if conn.execute(text("SELECT count(*) FROM users WHERE username='viewer'")).scalar() == 0:
             conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES ('viewer',:h,'viewer','¿Mascota?','perro')"), {"h": hash_pw("view123")})
 
 try: init_db()
-except Exception as e: st.error(f"Error DB: {e}")
+except Exception as e: st.error(f"Error DB Inicialización: {e}")
 
 @st.cache_data(ttl=300)
 def load_data_mes(m_idx, anio):
+    # Ahora leemos basándonos en los Timestamps nativos y descartamos los Soft Deletes
+    s_date = f"{anio}-{m_idx:02d}-01 00:00:00"
     end_d = calendar.monthrange(anio, m_idx)[1]
-    q = "SELECT * FROM incidents WHERE fecha_inicio >= :s AND fecha_inicio <= :e ORDER BY fecha_inicio ASC"
+    e_date = f"{anio}-{m_idx:02d}-{end_d} 23:59:59"
+    q = "SELECT * FROM incidents WHERE deleted_at IS NULL AND inicio_incidente >= :s AND inicio_incidente <= :e ORDER BY inicio_incidente ASC"
     try:
         with engine.connect() as conn:
             conn.execute(text("ROLLBACK"))
-            return pd.read_sql(text(q), conn, params={"s": f"{anio}-{m_idx:02d}-01", "e": f"{anio}-{m_idx:02d}-{end_d}"})
+            return pd.read_sql(text(q), conn, params={"s": s_date, "e": e_date})
     except: return pd.DataFrame()
 
 # =====================================================================
@@ -124,28 +102,28 @@ def enriquecer_y_normalizar(df):
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     
-    # Normalización
-    df['fecha_convertida']   = pd.to_datetime(df['fecha_inicio'], errors='coerce')
+    # Trabajamos con las nuevas columnas nativas de tiempo
+    df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'])
+    df['fin_incidente']    = pd.to_datetime(df['fin_incidente'])
+    df['fecha_convertida'] = df['inicio_incidente'].dt.date
+    
     df['duracion_horas']     = pd.to_numeric(df['duracion_horas'], errors='coerce').fillna(0.0)
     df['clientes_afectados'] = pd.to_numeric(df['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     if 'categoria' not in df.columns: df['categoria'] = 'Red Multinet'
 
-    # Clasificación Automática de Fallas Internas
     df.loc[(df['clientes_afectados'] == 0) & (df['conocimiento_tiempos'] == 'Total'), 'categoria'] = CAT_INTERNA
     
-    # Motor de Reglas: Calidad de Dato
-    df['tiene_inicio'] = df['hora_inicio'].apply(lambda x: pd.notna(x) and str(x).strip() != "" and str(x).strip() != "None")
-    df['tiene_fin'] = df['hora_fin'].apply(lambda x: pd.notna(x) and str(x).strip() != "" and str(x).strip() != "None")
+    # Data Quality Flags directos desde los Timestamps
+    df['tiene_inicio'] = df['inicio_incidente'].notna()
+    df['tiene_fin'] = df['fin_incidente'].notna()
     df['data_quality_flag'] = df['tiene_inicio'] & df['tiene_fin']
     
-    # Sistema de Severidad P1-P4
     def eval_severidad(r):
         if r['categoria'] == CAT_INTERNA: return 'P4 (Interna)'
         if r['duracion_horas'] >= 12 or r['clientes_afectados'] >= 1000: return 'P1 (Crítica)'
         if r['duracion_horas'] >= 4 or r['clientes_afectados'] >= 300: return 'P2 (Alta)'
         return 'P3 (Media)'
     
-    # Motor de Reglas: Recomendaciones Automáticas
     def eval_rec(r):
         recs = []
         if 'Energía' in str(r['causa_raiz']): recs.append("Revisar bancos de baterías/UPS")
@@ -155,42 +133,36 @@ def enriquecer_y_normalizar(df):
 
     df['Severidad'] = df.apply(eval_severidad, axis=1)
     df['Recomendacion_Auto'] = df.apply(eval_rec, axis=1)
-    
     return df
 
 # =====================================================================
-# CÁLCULO DE KPIs
+# CÁLCULO DE KPIs Y PDF
 # =====================================================================
 def calc_kpis(df, h_tot):
     base = {"db": 0.0, "acd": 0.0, "sla": 100.0, "mttr_ext": 0.0, "mttr_int": 0.0, "cl": 0, "mh": 0.0, "has_incomplete": False, "n_internas": 0, "db_int": 0.0, "p1_count": 0}
     if df.empty: return base
-
     mask_int  = df['categoria'] == CAT_INTERNA
-    df_ext    = df[~mask_int].copy()
-    df_int    = df[mask_int].copy()
-
-    base["n_internas"]      = len(df_int)
-    base["db_int"]          = float(df_int['duracion_horas'].sum())
-    base["has_incomplete"]  = not df['data_quality_flag'].all()
-    base["p1_count"]        = len(df[df['Severidad'] == 'P1 (Crítica)'])
+    df_ext    = df[~mask_int].copy(); df_int = df[mask_int].copy()
+    base["n_internas"] = len(df_int); base["db_int"] = float(df_int['duracion_horas'].sum())
+    base["has_incomplete"] = not df['data_quality_flag'].all()
+    base["p1_count"] = len(df[df['Severidad'] == 'P1 (Crítica)'])
 
     if not df_int.empty:
         iv = df_int[df_int['duracion_horas'] > 0]
         base["mttr_int"] = float(iv['duracion_horas'].mean()) if not iv.empty else 0.0
 
     if df_ext.empty: return base
-
     base["db"] = float(df_ext['duracion_horas'].sum())
 
     m_acd = (df_ext['duracion_horas'] > 0) & (df_ext['clientes_afectados'] > 0)
-    if m_acd.any():
-        base["acd"] = float((df_ext.loc[m_acd, 'duracion_horas'] * df_ext.loc[m_acd, 'clientes_afectados']).sum() / df_ext.loc[m_acd, 'clientes_afectados'].sum())
+    if m_acd.any(): base["acd"] = float((df_ext.loc[m_acd, 'duracion_horas'] * df_ext.loc[m_acd, 'clientes_afectados']).sum() / df_ext.loc[m_acd, 'clientes_afectados'].sum())
 
+    # SLA optimizado usando los Timestamps nativos
     v_kpi = df_ext[df_ext['data_quality_flag'] == True].copy()
     t_real = 0.0
     if not v_kpi.empty:
-        s_dt = pd.to_datetime(v_kpi['fecha_inicio'].astype(str) + ' ' + v_kpi['hora_inicio'].astype(str), errors='coerce')
-        e_dt = pd.to_datetime(v_kpi['fecha_fin'].astype(str)   + ' ' + v_kpi['hora_fin'].astype(str),   errors='coerce')
+        s_dt = v_kpi['inicio_incidente']
+        e_dt = v_kpi['fin_incidente']
         valid = s_dt.notna() & e_dt.notna() & (s_dt <= e_dt)
         if valid.any():
             intervals = sorted([[s, e] for s, e in zip(s_dt[valid], e_dt[valid])], key=lambda x: x[0])
@@ -206,90 +178,39 @@ def calc_kpis(df, h_tot):
     base["cl"] = int(df_ext['clientes_afectados'].sum())
     mh = df_ext['duracion_horas'].max()
     base["mh"] = float(mh) if pd.notna(mh) else 0.0
-
     return base
 
-# =====================================================================
-# AUDITORÍA
-# =====================================================================
 def log_audit(action, detail):
     try:
-        with engine.begin() as conn:
-            conn.execute(text("INSERT INTO audit_logs (timestamp,username,action,details) VALUES (:t,:u,:a,:d)"), {"t": datetime.now(SV_TZ).replace(tzinfo=None), "u": st.session_state.username, "a": action, "d": detail})
+        with engine.begin() as conn: conn.execute(text("INSERT INTO audit_logs (timestamp,username,action,details) VALUES (:t,:u,:a,:d)"), {"t": datetime.now(SV_TZ).replace(tzinfo=None), "u": st.session_state.username, "a": action, "d": detail})
     except: pass
 
 def log_version(incident_id, old_d, new_d):
     try:
-        with engine.begin() as conn:
-            conn.execute(text("INSERT INTO incidents_history (incident_id, changed_by, old_data, new_data) VALUES (:i, :u, :o, :n)"), {"i": incident_id, "u": st.session_state.username, "o": json.dumps(old_d), "n": json.dumps(new_d)})
+        with engine.begin() as conn: conn.execute(text("INSERT INTO incidents_history (incident_id, changed_by, old_data, new_data) VALUES (:i, :u, :o, :n)"), {"i": incident_id, "u": st.session_state.username, "o": json.dumps(old_d), "n": json.dumps(new_d)})
     except: pass
 
-# =====================================================================
-# GENERACIÓN DE PDF
-# =====================================================================
 def generar_pdf(mes, anio, kpis, df):
-    RL_ORANGE = rl_colors.HexColor('#f15c22')
-    RL_BLUE   = rl_colors.HexColor('#1d2c59')
-    RL_TEAL   = rl_colors.HexColor('#29b09d')
-    RL_LIGHT  = rl_colors.HexColor('#f5f5f5')
-    RL_GRAY   = rl_colors.HexColor('#888888')
-    RL_LGRAY  = rl_colors.HexColor('#dddddd')
-
+    RL_ORANGE = rl_colors.HexColor('#f15c22'); RL_BLUE = rl_colors.HexColor('#1d2c59'); RL_TEAL = rl_colors.HexColor('#29b09d'); RL_LIGHT = rl_colors.HexColor('#f5f5f5'); RL_GRAY = rl_colors.HexColor('#888888'); RL_LGRAY = rl_colors.HexColor('#dddddd')
     def mk_style(name, size, font='Helvetica', color=rl_colors.black, **kw): return ParagraphStyle(name, fontSize=size, fontName=font, textColor=color, **kw)
-    s_title  = mk_style('t',  22, 'Helvetica-Bold', RL_BLUE,   spaceAfter=2)
-    s_sub    = mk_style('s',  11, 'Helvetica',       RL_GRAY,   spaceAfter=14)
-    s_period = mk_style('pe', 11, 'Helvetica-Bold',  RL_ORANGE, spaceAfter=2)
-    s_body   = mk_style('b',   9, 'Helvetica',       rl_colors.black, spaceAfter=4)
-    s_sec    = mk_style('h',  13, 'Helvetica-Bold',  RL_BLUE,   spaceBefore=14, spaceAfter=6)
-    s_foot   = mk_style('f',   7, 'Helvetica',       RL_GRAY)
-
+    s_title = mk_style('t', 22, 'Helvetica-Bold', RL_BLUE, spaceAfter=2); s_sub = mk_style('s', 11, 'Helvetica', RL_GRAY, spaceAfter=14); s_period = mk_style('pe', 11, 'Helvetica-Bold', RL_ORANGE, spaceAfter=2); s_body = mk_style('b', 9, 'Helvetica', rl_colors.black, spaceAfter=4); s_sec = mk_style('h', 13, 'Helvetica-Bold', RL_BLUE, spaceBefore=14, spaceAfter=6); s_foot = mk_style('f', 7, 'Helvetica', RL_GRAY)
     def table_style(header_color, val_col=True):
-        base = [
-            ('BACKGROUND',    (0, 0), (-1, 0),  header_color), ('TEXTCOLOR',     (0, 0), (-1, 0),  rl_colors.white),
-            ('FONTNAME',      (0, 0), (-1, 0),  'Helvetica-Bold'), ('FONTSIZE',      (0, 0), (-1, 0),  9),
-            ('ROWBACKGROUNDS',(0, 1), (-1, -1), [RL_LIGHT, rl_colors.white]), ('FONTNAME',      (0, 1), (-1, -1), 'Helvetica'),
-            ('FONTSIZE',      (0, 1), (-1, -1), 9), ('VALIGN',        (0, 0), (-1, -1), 'MIDDLE'),
-            ('GRID',          (0, 0), (-1, -1), 0.4, RL_LGRAY), ('ROWHEIGHT',     (0, 0), (-1, -1), 20),
-            ('LEFTPADDING',   (0, 0), (-1, -1), 7), ('RIGHTPADDING',  (0, 0), (-1, -1), 7),
-        ]
-        if val_col: base += [('TEXTCOLOR',  (1, 1), (1, -1), RL_ORANGE), ('FONTNAME',   (1, 1), (1, -1), 'Helvetica-Bold'), ('ALIGN',      (1, 0), (1, -1), 'CENTER')]
+        base = [('BACKGROUND', (0,0), (-1,0), header_color), ('TEXTCOLOR', (0,0), (-1,0), rl_colors.white), ('FONTNAME', (0,0), (-1,0), 'Helvetica-Bold'), ('FONTSIZE', (0,0), (-1,0), 9), ('ROWBACKGROUNDS',(0,1), (-1,-1), [RL_LIGHT, rl_colors.white]), ('FONTNAME', (0,1), (-1,-1), 'Helvetica'), ('FONTSIZE', (0,1), (-1,-1), 9), ('VALIGN', (0,0), (-1,-1), 'MIDDLE'), ('GRID', (0,0), (-1,-1), 0.4, RL_LGRAY), ('ROWHEIGHT', (0,0), (-1,-1), 20), ('LEFTPADDING', (0,0), (-1,-1), 7), ('RIGHTPADDING', (0,0), (-1,-1), 7)]
+        if val_col: base += [('TEXTCOLOR', (1,1), (1,-1), RL_ORANGE), ('FONTNAME', (1,1), (1,-1), 'Helvetica-Bold'), ('ALIGN', (1,0), (1,-1), 'CENTER')]
         return TableStyle(base)
-
-    buffer = BytesIO()
-    doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm,  bottomMargin=2*cm)
-    story = []
-    now_str = datetime.now(SV_TZ).strftime('%d/%m/%Y %H:%M')
-
-    story.append(Paragraph("MULTINET", s_title)); story.append(Paragraph("Reporte Ejecutivo · Network Operations Center", s_sub))
-    story.append(HRFlowable(width="100%", thickness=2, color=RL_ORANGE, spaceAfter=10))
-    story.append(Paragraph(f"<b>Periodo:</b> {mes} {anio}", s_period)); story.append(Paragraph(f"<b>Generado:</b> {now_str} (hora El Salvador)", s_body)); story.append(Spacer(1, 0.5*cm))
-
+    buffer = BytesIO(); doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm); story = []; now_str = datetime.now(SV_TZ).strftime('%d/%m/%Y %H:%M')
+    story.append(Paragraph("MULTINET", s_title)); story.append(Paragraph("Reporte Ejecutivo · Network Operations Center", s_sub)); story.append(HRFlowable(width="100%", thickness=2, color=RL_ORANGE, spaceAfter=10)); story.append(Paragraph(f"<b>Periodo:</b> {mes} {anio}", s_period)); story.append(Paragraph(f"<b>Generado:</b> {now_str} (hora El Salvador)", s_body)); story.append(Spacer(1, 0.5*cm))
     story.append(Paragraph("1. Indicadores Clave de Rendimiento", s_sec))
-    kpi_rows = [
-        ['Indicador', 'Valor', 'Descripción'],
-        ['SLA (Disponibilidad)',  f"{kpis['sla']:.2f}%",          'Porcentaje de tiempo operativo del mes'],
-        ['MTTR · Clientes',      f"{kpis['mttr_ext']:.2f} hrs",   'Tiempo promedio de resolución (fallas externas)'],
-        ['ACD',                  f"{kpis['acd']:.2f} hrs",        'Afectación promedio ponderada por cliente'],
-        ['Clientes Afectados',   f"{kpis['cl']:,}",               'Total de usuarios impactados en el mes'],
-        ['Impacto Acumulado',    f"{kpis['db']/24:.2f} días",      'Días equivalentes de caída (fallas externas)'],
-        ['Fallas P1 (Críticas)', f"{kpis['p1_count']}",            'Incidentes de severidad máxima detectados'],
-    ]
+    kpi_rows = [['Indicador', 'Valor', 'Descripción'], ['SLA (Disponibilidad)', f"{kpis['sla']:.2f}%", 'Porcentaje de tiempo operativo'], ['MTTR · Clientes', f"{kpis['mttr_ext']:.2f} hrs", 'Promedio de resolución'], ['ACD', f"{kpis['acd']:.2f} hrs", 'Afectación promedio por cliente'], ['Clientes Afectados', f"{kpis['cl']:,}", 'Usuarios impactados'], ['Impacto Acumulado', f"{kpis['db']/24:.2f} días", 'Días de caída equivalentes'], ['Fallas P1 (Críticas)', f"{kpis['p1_count']}", 'Incidentes críticos']]
     kpi_t = Table(kpi_rows, colWidths=[5*cm, 3.2*cm, 8.8*cm]); kpi_t.setStyle(table_style(RL_BLUE)); story.append(kpi_t); story.append(Spacer(1, 0.4*cm))
-
     if not df.empty:
-        df_ext_p = df[df['categoria'] != CAT_INTERNA]
-        story.append(Paragraph("2. Zonas con Mayor Tiempo de Afectación", s_sec))
-        top_z = df_ext_p.groupby('zona')['duracion_horas'].sum().nlargest(8).reset_index()
+        df_ext_p = df[df['categoria'] != CAT_INTERNA]; story.append(Paragraph("2. Zonas con Mayor Tiempo de Afectación", s_sec)); top_z = df_ext_p.groupby('zona')['duracion_horas'].sum().nlargest(8).reset_index()
         if not top_z.empty:
             z_rows = [['Zona / Nodo', 'Horas de Caída', 'Días Equiv.']]
             for _, r in top_z.iterrows(): z_rows.append([str(r['zona']), f"{r['duracion_horas']:.1f} hrs", f"{r['duracion_horas']/24:.2f}"])
-            z_t = Table(z_rows, colWidths=[9*cm, 4.5*cm, 3.5*cm]); zs = table_style(RL_TEAL, val_col=False); zs.add('ALIGN', (1, 0), (-1, -1), 'CENTER'); z_t.setStyle(zs); story.append(z_t)
+            z_t = Table(z_rows, colWidths=[9*cm, 4.5*cm, 3.5*cm]); zs = table_style(RL_TEAL, val_col=False); zs.add('ALIGN', (1,0), (-1,-1), 'CENTER'); z_t.setStyle(zs); story.append(z_t)
         story.append(Spacer(1, 0.4*cm))
-
-    story.append(Spacer(1, 1*cm)); story.append(HRFlowable(width="100%", thickness=0.5, color=RL_LGRAY, spaceAfter=6))
-    story.append(Paragraph(f"MULTINET NOC  ·  Generado el {now_str}  ·  Documento Confidencial", s_foot))
-
-    doc.build(story); buffer.seek(0)
+    story.append(Spacer(1, 1*cm)); story.append(HRFlowable(width="100%", thickness=0.5, color=RL_LGRAY, spaceAfter=6)); story.append(Paragraph(f"MULTINET NOC  ·  Generado el {now_str}  ·  Documento Confidencial", s_foot)); doc.build(story); buffer.seek(0)
     return buffer.getvalue()
 
 # =====================================================================
@@ -358,7 +279,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v14.0")
+    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v15.0")
 
     anio_act = datetime.now(SV_TZ).year
     anios    = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
@@ -395,7 +316,6 @@ with tabs[0]:
     if df_m.empty:
         st.success(f"🟢 Excelente estado: No hay fallas registradas en {m_sel} {a_sel}.")
     else:
-        # ALERTA INTELIGENTE
         incompletos = df_m[~df_m['data_quality_flag']]
         if not incompletos.empty:
             st.warning(f"⚠️ **Alerta del Motor de Reglas:** Se detectaron {len(incompletos)} registro(s) con tiempos incompletos. El SLA excluye estos registros.")
@@ -456,7 +376,7 @@ with tabs[0]:
         if sel_p and sel_p.selection.point_indices:
             cx = dc.iloc[sel_p.selection.point_indices[0]]['Causa']
             st.info(f"🔍 **Detalle causa:** {cx}")
-            st.dataframe(df_m[df_m['causa_raiz'].map(lambda x: CC.get(x, str(x).split()[0])) == cx][['fecha_inicio','zona','Severidad','duracion_horas','descripcion']], hide_index=True)
+            st.dataframe(df_m[df_m['causa_raiz'].map(lambda x: CC.get(x, str(x).split()[0])) == cx][['inicio_incidente','zona','Severidad','duracion_horas','descripcion']], hide_index=True)
 
         st.divider()
         st.markdown("### 📊 Desglose por Severidad y Servicio")
@@ -475,13 +395,13 @@ with tabs[0]:
         st.divider()
         st.markdown("### 📈 Análisis Temporal")
         dt_trend = df_m.copy()
-        dt_trend['Dia']  = pd.to_datetime(dt_trend['fecha_convertida']).dt.day
+        dt_trend['Dia']  = dt_trend['inicio_incidente'].dt.day
         dt_trend['Tipo'] = dt_trend['categoria'].apply(lambda x: 'Actual (Interna)' if x == CAT_INTERNA else 'Actual (Externa)')
         da_t = dt_trend.groupby(['Dia','Tipo']).size().reset_index(name='Eventos').rename(columns={'Tipo': 'Mes'})
 
         if not df_p.empty:
             dp2 = df_p.copy()
-            dp2['Dia'] = pd.to_datetime(dp2['fecha_inicio'], errors='coerce').dt.day
+            dp2['Dia'] = dp2['inicio_incidente'].dt.day
             dpa = dp2.groupby('Dia').size().reset_index(name='Eventos')
             dpa['Mes'] = 'Mes Anterior'
             da_t = pd.concat([da_t, dpa], ignore_index=True)
@@ -491,9 +411,7 @@ with tabs[0]:
 
         dg = df_m[df_m['data_quality_flag'] == True].copy()
         if not dg.empty:
-            dg['Start'] = pd.to_datetime(dg['fecha_inicio'].astype(str) + ' ' + dg['hora_inicio'].astype(str))
-            dg['End']   = pd.to_datetime(dg['fecha_fin'].astype(str)   + ' ' + dg['hora_fin'].astype(str))
-            fg = px.timeline(dg, x_start="Start", x_end="End", y="zona", color="Severidad", color_discrete_sequence=PALETA_CORP, title="Gantt de Fallas Simultáneas (Solo datos completos)")
+            fg = px.timeline(dg, x_start="inicio_incidente", x_end="fin_incidente", y="zona", color="Severidad", color_discrete_sequence=PALETA_CORP, title="Gantt de Fallas Simultáneas (Solo datos completos)")
             fg.update_yaxes(autorange="reversed"); fg.update_traces(marker_line_width=1, marker_line_color="rgba(255,255,255,0.5)")
             fg.update_layout(margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)"); st.plotly_chart(fg, use_container_width=True)
 
@@ -507,7 +425,7 @@ with tabs[1]:
 
     ### 1. Disponibilidad de Red (SLA)
     **Concepto:** Mide el porcentaje de tiempo que el servicio estuvo disponible para los clientes en el mes.
-    **Fórmula Automática:** Toma el total de horas del mes seleccionado (ej. 720h) y le resta las **horas reales de caída**. Si dos nodos se caen al mismo tiempo (solapamiento), el sistema inteligentemente los fusiona para no penalizar el SLA doblemente. *Excluye Fallas Internas (P4)*.
+    **Fórmula Automática:** Toma el total de horas del mes seleccionado (ej. 720h) y le resta las **horas reales de caída**. Si dos nodos se caen al mismo tiempo (solapamiento), el sistema inteligentemente los fusiona usando cálculos de línea de tiempo nativos para no penalizar el SLA doblemente. *Excluye Fallas Internas (P4)*.
 
     ### 2. Tiempo Promedio de Resolución (MTTR)
     **Concepto:** Promedio de tiempo que el equipo técnico tarda en restaurar un servicio caído.
@@ -572,7 +490,7 @@ with tabs[3]:
 
         st.divider()
         st.markdown("#### Recomendaciones del Motor")
-        df_recs = df_m[df_m['Recomendacion_Auto'] != "Monitoreo regular"][['fecha_inicio', 'zona', 'causa_raiz', 'Recomendacion_Auto']]
+        df_recs = df_m[df_m['Recomendacion_Auto'] != "Monitoreo regular"][['inicio_incidente', 'zona', 'causa_raiz', 'Recomendacion_Auto']]
         if not df_recs.empty: st.dataframe(df_recs, use_container_width=True, hide_index=True)
         else: st.success("✅ Todos los registros lucen correctos y sin advertencias.")
 
@@ -581,9 +499,14 @@ with tabs[3]:
 # ─────────────────────────────────────────────
 if st.session_state.role == 'admin':
 
-    # ── TAB 4: INGRESO ──
+    # ── TAB 4: INGRESO CON CMDB ──
     with tabs[4]:
         st.title("📝 Ingreso Operativo")
+        
+        # Cargar CMDB para autocompletar clientes
+        try: cmdb_df = pd.read_sql("SELECT zona, equipo, clientes FROM inventario_nodos", engine)
+        except: cmdb_df = pd.DataFrame(columns=['zona', 'equipo', 'clientes'])
+        
         cf, ccx = st.columns([2, 1], gap="large")
 
         with cf:
@@ -619,7 +542,12 @@ if st.session_state.role == 'admin':
                         cl_f = 0
                         st.info("🔧 Falla interna: 0 clientes. No afecta SLA ni ACD.", icon="ℹ️")
                     else:
-                        cl_f = st.number_input("👤 Clientes Afectados", min_value=0, step=1)
+                        # CMDB Autocompletado
+                        default_cl = 0
+                        if not cmdb_df.empty:
+                            match = cmdb_df[(cmdb_df['zona'] == z) & (cmdb_df['equipo'] == eq)]
+                            if not match.empty: default_cl = int(match['clientes'].iloc[0])
+                        cl_f = st.number_input("👤 Clientes Afectados", min_value=0, value=default_cl, step=1, help="Autocompletado con el último registro histórico conocido para esta zona y equipo (CMDB).")
 
                 cr   = cf2.selectbox("🛠️ Causa Raíz", CAUSAS_RAIZ)
                 desc = st.text_area("📝 Descripción del Evento")
@@ -628,26 +556,30 @@ if st.session_state.role == 'admin':
                     if fi > ff or (fi == ff and hi_val and hf_val and hi_val > hf_val):
                         st.toast("❌ Error lógico: la fecha/hora de cierre es anterior al inicio.", icon="🚨")
                     else:
-                        with st.spinner("Guardando..."):
+                        with st.spinner("Guardando en la nueva estructura..."):
                             try:
+                                # Crear Timestamps Nativos
+                                inicio_dt = SV_TZ.localize(datetime.combine(fi, hi_val)) if hi_val else None
+                                fin_dt = SV_TZ.localize(datetime.combine(ff, hf_val)) if hf_val else None
+                                
                                 with engine.begin() as conn:
                                     conn.execute(text("""
                                         INSERT INTO incidents
                                             (zona,servicio,categoria,equipo_afectado,
-                                             fecha_inicio,hora_inicio,fecha_fin,hora_fin,
+                                             inicio_incidente,fin_incidente,
                                              clientes_afectados,causa_raiz,descripcion,
                                              duracion_horas,conocimiento_tiempos)
                                         VALUES
-                                            (:z,:s,:c,:e,:fi,:hi,:ff,:hf,:cl,:cr,:d,:dur,:con)
+                                            (:z,:s,:c,:e,:idi,:idf,:cl,:cr,:d,:dur,:con)
                                     """), {
                                         "z": z, "s": srv, "c": cat, "e": eq,
-                                        "fi": fi.strftime("%Y-%m-%d"),
-                                        "hi": hi_val.strftime("%H:%M:%S") if hi_val else None,
-                                        "ff": ff.strftime("%Y-%m-%d"),
-                                        "hf": hf_val.strftime("%H:%M:%S") if hf_val else None,
+                                        "idi": inicio_dt, "idf": fin_dt,
                                         "cl": cl_f, "cr": cr, "d": desc, "dur": dur,
                                         "con": "Total" if hi_val and hf_val else "Parcial"
                                     })
+                                    # Actualizar CMDB si el valor subió
+                                    conn.execute(text("INSERT INTO inventario_nodos (zona, equipo, clientes) VALUES (:z, :e, :cl) ON CONFLICT (zona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes"), {"z": z, "e": eq, "cl": cl_f})
+                                
                                 log_audit("INSERT", f"Falla en {z} [{cat}]")
                                 load_data_mes.clear(fi.month, fi.year)
                                 st.toast("✅ Registro guardado exitosamente.", icon="🎉")
@@ -666,7 +598,7 @@ if st.session_state.role == 'admin':
 
     # ── TAB 5: AUDITORÍA BD Y VERSIONADO ──
     with tabs[5]:
-        st.markdown("### 🗂️ Auditoría y Modificación de Base de Datos")
+        st.markdown("### 🗂️ Auditoría Avanzada y Borrados Lógicos")
         if df_m.empty:
             st.info("No hay datos registrados para este periodo.")
         else:
@@ -683,44 +615,57 @@ if st.session_state.role == 'admin':
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_page.insert(0, "Sel", False)
 
-            drop_cols = [c for c in ['fecha_convertida','mes_nombre','lat','lon','Severidad','Recomendacion_Auto','tiene_inicio','tiene_fin','data_quality_flag'] if c in df_page.columns]
+            # Ocultamos columnas residuales y de lógicas
+            drop_cols = [c for c in ['fecha_convertida','mes_nombre','lat','lon','Severidad','Recomendacion_Auto','tiene_inicio','tiene_fin','data_quality_flag', 'fecha_inicio', 'hora_inicio', 'fecha_fin', 'hora_fin'] if c in df_page.columns]
+            
             ed_df = st.data_editor(
                 df_page.drop(columns=drop_cols, errors='ignore'),
                 column_config={
                     "Sel":            st.column_config.CheckboxColumn("✔", default=False),
                     "id":             None,
+                    "inicio_incidente": st.column_config.DatetimeColumn("Inicio", format="YYYY-MM-DD HH:mm:ss"),
+                    "fin_incidente": st.column_config.DatetimeColumn("Fin", format="YYYY-MM-DD HH:mm:ss"),
                     "worksheet_name": None,
                     "gsheet_id":      None,
+                    "deleted_at":     None,
                 },
                 use_container_width=True, hide_index=True
             )
 
             f_del  = ed_df[ed_df["Sel"] == True]
             ref_df = df_page.drop(columns=drop_cols + ['Sel'] if 'Sel' in drop_cols else drop_cols, errors='ignore').reset_index(drop=True)
-            h_cam  = not ref_df.equals(ed_df.drop(columns=['Sel']).reset_index(drop=True))
+            
+            # Formatear el dt del editor de vuelta a datetime de pandas para comparación correcta
+            ed_df_compare = ed_df.drop(columns=['Sel']).copy()
+            if 'inicio_incidente' in ed_df_compare: ed_df_compare['inicio_incidente'] = pd.to_datetime(ed_df_compare['inicio_incidente']).dt.tz_convert(None) if ed_df_compare['inicio_incidente'].dt.tz else pd.to_datetime(ed_df_compare['inicio_incidente'])
+            if 'fin_incidente' in ed_df_compare: ed_df_compare['fin_incidente'] = pd.to_datetime(ed_df_compare['fin_incidente']).dt.tz_convert(None) if ed_df_compare['fin_incidente'].dt.tz else pd.to_datetime(ed_df_compare['fin_incidente'])
+            
+            ref_df_compare = ref_df.copy()
+            if 'inicio_incidente' in ref_df_compare: ref_df_compare['inicio_incidente'] = ref_df_compare['inicio_incidente'].dt.tz_convert(None) if ref_df_compare['inicio_incidente'].dt.tz else ref_df_compare['inicio_incidente']
+            if 'fin_incidente' in ref_df_compare: ref_df_compare['fin_incidente'] = ref_df_compare['fin_incidente'].dt.tz_convert(None) if ref_df_compare['fin_incidente'].dt.tz else ref_df_compare['fin_incidente']
+
+            h_cam  = not ref_df_compare.equals(ed_df_compare)
 
             if not f_del.empty or h_cam:
                 cb1, cb2 = st.columns(2)
-                if not f_del.empty and cb1.button("🗑️ Eliminar Seleccionados", type="primary", use_container_width=True):
+                if not f_del.empty and cb1.button("🗑️ Eliminar Seleccionados (Soft Delete)", type="primary", use_container_width=True):
                     with engine.begin() as conn:
                         for rid in f_del['id']:
-                            conn.execute(text("DELETE FROM incidents WHERE id=:id"), {"id": int(rid)})
-                    log_audit("DELETE", f"Eliminados {len(f_del)} registro(s).")
+                            conn.execute(text("UPDATE incidents SET deleted_at = CURRENT_TIMESTAMP WHERE id=:id"), {"id": int(rid)})
+                    log_audit("DELETE (SOFT)", f"Eliminados lógicamente {len(f_del)} registro(s).")
                     load_data_mes.clear(m_idx, a_sel)
-                    st.toast("Eliminados correctamente.", icon="✅"); time.sleep(1); st.rerun()
+                    st.toast("Borrados lógicamente de la vista.", icon="✅"); time.sleep(1); st.rerun()
 
                 if h_cam and cb2.button("💾 Guardar Cambios (Crea Versión)", type="primary", use_container_width=True):
                     with engine.begin() as conn:
                         for i, r in ed_df.iterrows():
                             o = ref_df.iloc[i]
                             if not o.equals(r.drop('Sel')):
-                                # Registrar Versión Histórica
-                                log_version(int(r['id']), o.to_dict(), r.drop('Sel').to_dict())
-                                # Ejecutar Update
+                                log_version(int(r['id']), o.to_json(default_handler=str), r.drop('Sel').to_json(default_handler=str))
                                 conn.execute(text("""
                                     UPDATE incidents SET
                                         zona=:z, servicio=:s, categoria=:c, equipo_afectado=:e,
-                                        fecha_inicio=:fi, hora_inicio=:hi, fecha_fin=:ff, hora_fin=:hf,
+                                        inicio_incidente=:idi, fin_incidente=:idf,
                                         clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d,
                                         duracion_horas=:dur
                                     WHERE id=:id
@@ -729,10 +674,8 @@ if st.session_state.role == 'admin':
                                     "s":   r.get('servicio',''),
                                     "c":   r.get('categoria',''),
                                     "e":   r.get('equipo_afectado',''),
-                                    "fi":  r.get('fecha_inicio',''),
-                                    "hi":  None if pd.isna(r.get('hora_inicio')) else r.get('hora_inicio'),
-                                    "ff":  r.get('fecha_fin',''),
-                                    "hf":  None if pd.isna(r.get('hora_fin')) else r.get('hora_fin'),
+                                    "idi": r.get('inicio_incidente', None),
+                                    "idf": r.get('fin_incidente', None),
                                     "cl":  int(r.get('clientes_afectados', 0)),
                                     "cr":  r.get('causa_raiz',''),
                                     "d":   r.get('descripcion',''),
@@ -752,7 +695,7 @@ if st.session_state.role == 'admin':
                 st.download_button("📥 Descargar PDF", generar_pdf(m_sel, a_sel, kpis_a, df_m), f"NOC_{m_sel}_{a_sel}.pdf", "application/pdf", use_container_width=True)
             
             st.divider()
-            st.markdown("#### ⏳ Historial de Versiones (Modificaciones de Tickets)")
+            st.markdown("#### ⏳ Historial de Versiones (Auditoría de Cambios)")
             try:
                 with engine.connect() as conn:
                     v_hist = pd.read_sql(text("SELECT id, incident_id as ID_Ticket, changed_by as Editor, changed_at as Fecha_Cambio FROM incidents_history ORDER BY id DESC LIMIT 10"), conn)
