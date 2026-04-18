@@ -45,7 +45,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =====================================================================
-# BASE DE DATOS: AUTO-MIGRACIÓN Y ESTRUCTURA AVANZADA
+# BASE DE DATOS: AUTO-MIGRACIÓN BLINDADA
 # =====================================================================
 @st.cache_resource
 def get_engine(): return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
@@ -56,23 +56,30 @@ def check_pw(p, h): return bcrypt.checkpw(p.encode(), h.encode())
 
 def init_db():
     with engine.begin() as conn:
-        # 1. Mejoras de Seguridad de Usuario
+        # Seguridad y Auditoría
         conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS failed_attempts INT DEFAULT 0, ADD COLUMN IF NOT EXISTS locked_until TIMESTAMP, ADD COLUMN IF NOT EXISTS is_banned BOOLEAN DEFAULT FALSE;"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS incidents_history (id SERIAL PRIMARY KEY, incident_id INT, changed_by VARCHAR(50), changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, old_data TEXT, new_data TEXT)"))
         
-        # 2. AUTO-MIGRACIÓN DE ESTRUCTURA: Unificación de Tiempos y Soft Deletes
+        # Nuevas columnas de control de tiempo
         conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS inicio_incidente TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS fin_incidente TIMESTAMPTZ, ADD COLUMN IF NOT EXISTS deleted_at TIMESTAMPTZ DEFAULT NULL;"))
         
-        # Transfiere datos viejos (strings) a los nuevos Timestamps nativos de Postgres
-        conn.execute(text("UPDATE incidents SET inicio_incidente = (fecha_inicio || ' ' || COALESCE(hora_inicio, '00:00:00'))::timestamp AT TIME ZONE 'America/El_Salvador' WHERE inicio_incidente IS NULL AND fecha_inicio IS NOT NULL AND fecha_inicio != ''"))
-        conn.execute(text("UPDATE incidents SET fin_incidente = (fecha_fin || ' ' || COALESCE(hora_fin, '00:00:00'))::timestamp AT TIME ZONE 'America/El_Salvador' WHERE fin_incidente IS NULL AND fecha_fin IS NOT NULL AND fecha_fin != '' AND hora_fin IS NOT NULL AND hora_fin != ''"))
+        # MIGRACIÓN SEGURA (::text para evitar errores de tipo en PostgreSQL)
+        conn.execute(text("""
+            UPDATE incidents 
+            SET inicio_incidente = (fecha_inicio::text || ' ' || COALESCE(hora_inicio::text, '00:00:00'))::timestamp AT TIME ZONE 'America/El_Salvador' 
+            WHERE inicio_incidente IS NULL AND fecha_inicio IS NOT NULL AND fecha_inicio::text != ''
+        """))
+        conn.execute(text("""
+            UPDATE incidents 
+            SET fin_incidente = (fecha_fin::text || ' ' || COALESCE(hora_fin::text, '00:00:00'))::timestamp AT TIME ZONE 'America/El_Salvador' 
+            WHERE fin_incidente IS NULL AND fecha_fin IS NOT NULL AND fecha_fin::text != ''
+        """))
 
-        # 3. CREACIÓN DE CMDB (Inventario Nodos)
+        # CMDB (Inventario)
         conn.execute(text("CREATE TABLE IF NOT EXISTS inventario_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(100), equipo VARCHAR(100), clientes INT DEFAULT 0, UNIQUE(zona, equipo));"))
-        # Auto-poblar CMDB aprendiendo de los datos históricos máximos
         conn.execute(text("INSERT INTO inventario_nodos (zona, equipo, clientes) SELECT zona, equipo_afectado, MAX(clientes_afectados) FROM incidents WHERE clientes_afectados > 0 AND zona IS NOT NULL AND equipo_afectado IS NOT NULL GROUP BY zona, equipo_afectado ON CONFLICT (zona, equipo) DO NOTHING;"))
 
-        # Usuarios base
+        # Usuarios
         if conn.execute(text("SELECT count(*) FROM users WHERE username='Admin'")).scalar() == 0:
             conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES ('Admin',:h,'admin','¿Color favorito?','azul')"), {"h": hash_pw("Areakde5")})
         if conn.execute(text("SELECT count(*) FROM users WHERE username='viewer'")).scalar() == 0:
@@ -83,7 +90,6 @@ except Exception as e: st.error(f"Error DB Inicialización: {e}")
 
 @st.cache_data(ttl=300)
 def load_data_mes(m_idx, anio):
-    # Ahora leemos basándonos en los Timestamps nativos y descartamos los Soft Deletes
     s_date = f"{anio}-{m_idx:02d}-01 00:00:00"
     end_d = calendar.monthrange(anio, m_idx)[1]
     e_date = f"{anio}-{m_idx:02d}-{end_d} 23:59:59"
@@ -102,7 +108,6 @@ def enriquecer_y_normalizar(df):
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     
-    # Trabajamos con las nuevas columnas nativas de tiempo
     df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'])
     df['fin_incidente']    = pd.to_datetime(df['fin_incidente'])
     df['fecha_convertida'] = df['inicio_incidente'].dt.date
@@ -113,7 +118,6 @@ def enriquecer_y_normalizar(df):
 
     df.loc[(df['clientes_afectados'] == 0) & (df['conocimiento_tiempos'] == 'Total'), 'categoria'] = CAT_INTERNA
     
-    # Data Quality Flags directos desde los Timestamps
     df['tiene_inicio'] = df['inicio_incidente'].notna()
     df['tiene_fin'] = df['fin_incidente'].notna()
     df['data_quality_flag'] = df['tiene_inicio'] & df['tiene_fin']
@@ -157,7 +161,6 @@ def calc_kpis(df, h_tot):
     m_acd = (df_ext['duracion_horas'] > 0) & (df_ext['clientes_afectados'] > 0)
     if m_acd.any(): base["acd"] = float((df_ext.loc[m_acd, 'duracion_horas'] * df_ext.loc[m_acd, 'clientes_afectados']).sum() / df_ext.loc[m_acd, 'clientes_afectados'].sum())
 
-    # SLA optimizado usando los Timestamps nativos
     v_kpi = df_ext[df_ext['data_quality_flag'] == True].copy()
     t_real = 0.0
     if not v_kpi.empty:
@@ -279,7 +282,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v15.0")
+    st.caption(f"Usuario: **{st.session_state.username}** | Enterprise v15.1")
 
     anio_act = datetime.now(SV_TZ).year
     anios    = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
@@ -503,7 +506,6 @@ if st.session_state.role == 'admin':
     with tabs[4]:
         st.title("📝 Ingreso Operativo")
         
-        # Cargar CMDB para autocompletar clientes
         try: cmdb_df = pd.read_sql("SELECT zona, equipo, clientes FROM inventario_nodos", engine)
         except: cmdb_df = pd.DataFrame(columns=['zona', 'equipo', 'clientes'])
         
@@ -542,7 +544,6 @@ if st.session_state.role == 'admin':
                         cl_f = 0
                         st.info("🔧 Falla interna: 0 clientes. No afecta SLA ni ACD.", icon="ℹ️")
                     else:
-                        # CMDB Autocompletado
                         default_cl = 0
                         if not cmdb_df.empty:
                             match = cmdb_df[(cmdb_df['zona'] == z) & (cmdb_df['equipo'] == eq)]
@@ -558,7 +559,6 @@ if st.session_state.role == 'admin':
                     else:
                         with st.spinner("Guardando en la nueva estructura..."):
                             try:
-                                # Crear Timestamps Nativos
                                 inicio_dt = SV_TZ.localize(datetime.combine(fi, hi_val)) if hi_val else None
                                 fin_dt = SV_TZ.localize(datetime.combine(ff, hf_val)) if hf_val else None
                                 
@@ -577,7 +577,6 @@ if st.session_state.role == 'admin':
                                         "cl": cl_f, "cr": cr, "d": desc, "dur": dur,
                                         "con": "Total" if hi_val and hf_val else "Parcial"
                                     })
-                                    # Actualizar CMDB si el valor subió
                                     conn.execute(text("INSERT INTO inventario_nodos (zona, equipo, clientes) VALUES (:z, :e, :cl) ON CONFLICT (zona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes"), {"z": z, "e": eq, "cl": cl_f})
                                 
                                 log_audit("INSERT", f"Falla en {z} [{cat}]")
@@ -615,7 +614,6 @@ if st.session_state.role == 'admin':
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_page.insert(0, "Sel", False)
 
-            # Ocultamos columnas residuales y de lógicas
             drop_cols = [c for c in ['fecha_convertida','mes_nombre','lat','lon','Severidad','Recomendacion_Auto','tiene_inicio','tiene_fin','data_quality_flag', 'fecha_inicio', 'hora_inicio', 'fecha_fin', 'hora_fin'] if c in df_page.columns]
             
             ed_df = st.data_editor(
@@ -635,7 +633,6 @@ if st.session_state.role == 'admin':
             f_del  = ed_df[ed_df["Sel"] == True]
             ref_df = df_page.drop(columns=drop_cols + ['Sel'] if 'Sel' in drop_cols else drop_cols, errors='ignore').reset_index(drop=True)
             
-            # Formatear el dt del editor de vuelta a datetime de pandas para comparación correcta
             ed_df_compare = ed_df.drop(columns=['Sel']).copy()
             if 'inicio_incidente' in ed_df_compare: ed_df_compare['inicio_incidente'] = pd.to_datetime(ed_df_compare['inicio_incidente']).dt.tz_convert(None) if ed_df_compare['inicio_incidente'].dt.tz else pd.to_datetime(ed_df_compare['inicio_incidente'])
             if 'fin_incidente' in ed_df_compare: ed_df_compare['fin_incidente'] = pd.to_datetime(ed_df_compare['fin_incidente']).dt.tz_convert(None) if ed_df_compare['fin_incidente'].dt.tz else pd.to_datetime(ed_df_compare['fin_incidente'])
