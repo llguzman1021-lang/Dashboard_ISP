@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import requests, time, bcrypt, math, pytz, calendar, json
+import time, bcrypt, math, pytz, calendar
 from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta, date, time as datetime_time
 from io import BytesIO
@@ -68,7 +68,7 @@ for _k, _v in [('form_reset', 0), ('logged_in', False), ('role', ''), ('username
     if _k not in st.session_state: st.session_state[_k] = _v
 
 # =====================================================================
-# BASE DE DATOS Y NUEVA ARQUITECTURA RELACIONAL
+# BASE DE DATOS Y ARQUITECTURA RELACIONAL
 # =====================================================================
 @st.cache_resource
 def get_engine(): return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
@@ -129,53 +129,7 @@ def get_causas_con_flag() -> dict:
     except: return {}
 
 def clear_catalog_cache():
-    get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear(); fetch_and_sync_smartolt.clear()
-
-# =====================================================================
-# MOTOR DE SINCRONIZACIÓN SMARTOLT -> NEON
-# =====================================================================
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_and_sync_smartolt() -> dict:
-    try:
-        base_url = st.secrets.get("smartolt_api_url", "").rstrip("/")
-        api_key  = st.secrets.get("smartolt_api_key", "")
-        if not base_url or not api_key: return {"_error": "Faltan credenciales en st.secrets."}
-
-        headers = {"X-Token": api_key}
-        res = requests.get(f"{base_url}/api/onu/get_all_onus_details", headers=headers, timeout=15)
-        
-        if res.status_code == 403: return {"_error": "Error HTTP 403: Acceso denegado por SmartOLT."}
-        if res.status_code != 200: return {"_error": f"Error HTTP {res.status_code}."}
-        
-        try: data = res.json()
-        except: return {"_error": "La API no devolvió JSON."}
-        
-        onus_list = []
-        if isinstance(data, list): onus_list = data
-        elif isinstance(data, dict):
-            for key in ["response", "onus", "data", "onus_status"]:
-                if key in data and isinstance(data[key], list):
-                    onus_list = data[key]; break
-
-        if not onus_list: return {"_error": "No se encontraron ONUs activas o la API respondió vacío."}
-            
-        resultado = {}
-        for onu in onus_list:
-            if isinstance(onu, dict):
-                olt_name = str(onu.get("olt_name", onu.get("olt", "OLT_Desconocida"))).strip()
-                resultado[olt_name] = resultado.get(olt_name, 0) + 1
-        
-        with engine.begin() as conn:
-            for olt_name, total in resultado.items():
-                conn.execute(text("""
-                    INSERT INTO cmdb_nodos (zona, equipo, clientes, fuente, ultima_sincronizacion) 
-                    VALUES (:z, 'OLT', :c, 'SmartOLT', CURRENT_TIMESTAMP)
-                    ON CONFLICT (zona, equipo) DO UPDATE 
-                    SET clientes = EXCLUDED.clientes, fuente = 'SmartOLT', ultima_sincronizacion = CURRENT_TIMESTAMP
-                """), {"z": olt_name, "c": total})
-                
-        return resultado
-    except Exception as ex: return {"_error": str(ex)}
+    get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear()
 
 def get_clientes_cmdb(zona: str, equipo: str) -> dict:
     if zona == "San Salvador (Central)": return {"clientes": 0, "fuente": "Datacenter/Core"}
@@ -185,12 +139,6 @@ def get_clientes_cmdb(zona: str, equipo: str) -> dict:
             if res: return {"clientes": res[0], "fuente": res[1]}
     except: pass
     return {"clientes": 0, "fuente": "Manual"}
-
-def smartolt_status_badge() -> str:
-    data = fetch_and_sync_smartolt()
-    if "_error" in data: return f"🔴 {data['_error']}"
-    if not data: return "🟡 SmartOLT: Sin datos"
-    return f"🟢 API Live: {len(data)} OLTs · {sum(v for v in data.values()):,} ONTs"
 
 # =====================================================================
 # CARGA Y ENRIQUECIMIENTO 
@@ -261,7 +209,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         "t3": {"fallas": 0, "clientes_est": 0},
         "int": {"fallas": 0, "mttr": 0.0},
         "abiertos": 0,
-        "zonas_sla": {} # SLA Geográfico
+        "zonas_sla": {} 
     }
     if df.empty: return base
 
@@ -291,13 +239,10 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     
     # === CÁLCULO DE SLA GEOGRÁFICO ===
     if not df_exact.empty:
-        # Excluimos mantenimientos programados del SLA para no castigarlo
         df_sla = df_exact[df_exact['causa_raiz'] != 'Mantenimiento Programado']
-        
         for z in df_sla['zona'].unique():
             df_z = df_sla[df_sla['zona'] == z]
-            s_cl_z  = df_z['inicio_incidente'].clip(lower=rng_s)
-            e_cl_z  = df_z['fin_incidente'].clip(upper=rng_e)
+            s_cl_z  = df_z['inicio_incidente'].clip(lower=rng_s); e_cl_z  = df_z['fin_incidente'].clip(upper=rng_e)
             valid_z = (s_cl_z <= e_cl_z)
             ivs_z   = [[s, e] for s, e in zip(s_cl_z[valid_z], e_cl_z[valid_z])]
             t_down_z = sum((e - s).total_seconds() for s, e in _merge_intervals(ivs_z)) / 3600.0
@@ -387,7 +332,7 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 # =====================================================================
-# LOGIN SECURE
+# LOGIN SECURE 
 # =====================================================================
 def do_login():
     u, p = st.session_state.log_u, st.session_state.log_p
@@ -428,8 +373,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v27.0")
-    st.caption(smartolt_status_badge())
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.0")
     st.divider()
 
     anio_act = datetime.now(SV_TZ).year
@@ -462,17 +406,17 @@ with st.sidebar:
     if st.button("🚪 Cerrar Sesión", use_container_width=True): log_audit("LOGOUT", "Sesión cerrada."); st.session_state.clear(); st.rerun()
 
 # =====================================================================
-# PESTAÑAS POR ROL (NUEVA PESTAÑA AÑADIDA)
+# PESTAÑAS POR ROL
 # =====================================================================
 role = st.session_state.role
 t_idx = 0
 
 if role == 'admin':
-    tab_labels = ["📊 Dashboard", "📡 Infraestructura", "📝 Registrar Evento", "🗂️ Historial y Edición", "⚙️ Configuración"]
+    tab_labels = ["📊 Dashboard", "📝 Registrar Evento", "🗂️ Historial y Edición", "⚙️ Configuración"]
 elif role == 'auditor':
-    tab_labels = ["📊 Dashboard", "📡 Infraestructura", "📝 Registrar Evento", "🗂️ Historial y Edición"]
+    tab_labels = ["📊 Dashboard", "📝 Registrar Evento", "🗂️ Historial y Edición"]
 else:
-    tab_labels = ["📊 Dashboard", "📡 Infraestructura"]
+    tab_labels = ["📊 Dashboard"]
 
 tabs = st.tabs(tab_labels)
 
@@ -512,7 +456,7 @@ with tabs[t_idx]:
 
         st.divider()
         
-        # ── NUEVO: SLA GEOGRÁFICO ──
+        # ── SLA GEOGRÁFICO ──
         st.markdown("### 📍 SLA por Zona (Disponibilidad Geográfica)")
         st.caption("*Desglose de disponibilidad por cada nodo principal.*")
         
@@ -529,10 +473,11 @@ with tabs[t_idx]:
 
         st.divider()
 
-        # ── IMPACTO A CLIENTES ──
+        # ── IMPACTO A CLIENTES (Con Banner de Inteligencia Manual) ──
         st.markdown("### 👥 Impacto Directo a Clientes (Datos Exactos)")
+        st.info("💡 **Inteligencia Operativa:** Los valores de Clientes Afectados y ACD se basan en el registro histórico de la base de datos de configuración (CMDB) y los reportes ingresados por los técnicos del NOC.")
 
-        if kpis['t1']['fallas'] == 0: st.info("ℹ️ No hay incidentes masivos cerrados con tiempos exactos.")
+        if kpis['t1']['fallas'] == 0: st.success("🟢 No hay incidentes masivos cerrados con afectación a clientes.")
         else:
             t1a, t1b, t1c, t1d = st.columns(4)
             t1a.metric("Fallas Completas", kpis['t1']['fallas'], delta=_delta('t1','fallas', fmt="{:+.0f}"), delta_color="inverse")
@@ -589,44 +534,7 @@ with tabs[t_idx]:
 t_idx += 1
 
 # ─────────────────────────────────────────────
-# TAB 1 — INFRAESTRUCTURA (NUEVA PESTAÑA)
-# ─────────────────────────────────────────────
-with tabs[t_idx]:
-    st.title("📡 Estado de la Infraestructura (SmartOLT)")
-    st.caption("Visión en tiempo real de la capacidad y distribución de clientes en la red.")
-    
-    smartolt_data = fetch_and_sync_smartolt()
-    
-    if "_error" in smartolt_data:
-        st.error(f"Error de conexión con SmartOLT: {smartolt_data['_error']}")
-    elif not smartolt_data:
-        st.warning("No se detectaron OLTs o clientes activos en SmartOLT.")
-    else:
-        total_olts = len(smartolt_data)
-        total_clientes = sum(smartolt_data.values())
-        
-        c1, c2 = st.columns(2)
-        c1.metric("Total OLTs Registradas", total_olts)
-        c2.metric("Total Clientes Activos (ONTs)", f"{total_clientes:,}")
-        
-        st.write("")
-        df_infra = pd.DataFrame(list(smartolt_data.items()), columns=['OLT / Nodo', 'Clientes Activos'])
-        df_infra = df_infra.sort_values('Clientes Activos', ascending=False)
-        
-        c_chart, c_table = st.columns([2, 1])
-        with c_chart:
-            fig_tree = px.treemap(df_infra, path=['OLT / Nodo'], values='Clientes Activos', color='Clientes Activos', color_continuous_scale='Teal', title="Distribución de Carga por OLT")
-            fig_tree.update_layout(margin=dict(l=0, r=0, t=40, b=0), paper_bgcolor="rgba(0,0,0,0)", height=500)
-            st.plotly_chart(fig_tree, use_container_width=True)
-            
-        with c_table:
-            st.markdown("**Desglose Exacto**")
-            st.dataframe(df_infra, use_container_width=True, hide_index=True, height=500)
-
-t_idx += 1
-
-# ─────────────────────────────────────────────
-# TAB 2 — REGISTRAR EVENTO
+# TAB 1 — REGISTRAR EVENTO
 # ─────────────────────────────────────────────
 if role in ('admin', 'auditor'):
     with tabs[t_idx]:
@@ -658,7 +566,6 @@ if role in ('admin', 'auditor'):
 
                 cmdb_data = get_clientes_cmdb(z_f, eq_f)
                 d_cl = cmdb_data['clientes']
-                fuente_dato = cmdb_data['fuente']
 
                 st.divider()
                 
@@ -679,8 +586,7 @@ if role in ('admin', 'auditor'):
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
                     st.caption("🔧 Interna: fijado en 0 clientes.")
                 else:
-                    if fuente_dato == 'SmartOLT': st.info(f"🔴 **SmartOLT:** {d_cl:,} clientes totales aprovisionados en esta OLT")
-                    cl_f = st.number_input(f"👤 Clientes Afectados *(fuente base: {fuente_dato})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
+                    cl_f = st.number_input(f"👤 Clientes Afectados *(registro histórico de la CMDB: {d_cl})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
                     imp_pct = round((cl_f / d_cl) * 100, 2) if d_cl > 0 else 0.0
 
                 st.divider()
@@ -765,11 +671,42 @@ if role in ('admin', 'auditor'):
     t_idx += 1
 
 # ─────────────────────────────────────────────
-# TAB 3 — HISTORIAL Y EDICIÓN
+# TAB 2 — HISTORIAL Y EDICIÓN
 # ─────────────────────────────────────────────
 if role in ('admin', 'auditor'):
     with tabs[t_idx]:
         st.markdown("### 🗂️ Historial, Auditoría y Edición")
+        
+        # ── CIERRE RÁPIDO DE TICKETS ──
+        df_abiertos = df_m[df_m['estado'] == 'Abierto']
+        if not df_abiertos.empty:
+            st.warning("🚨 Tienes fallas en curso. Puedes cerrarlas rápidamente aquí:")
+            with st.expander("Cerrar Falla en Curso (Ticket Abierto)", expanded=True):
+                with st.form("form_cerrar_ticket"):
+                    t_opts = {r['id']: f"ID: {r['id']} | Nodo: {r['zona_completa']} | Inicio: {r['inicio_incidente'].strftime('%d/%m/%Y %H:%M')}" for _, r in df_abiertos.iterrows()}
+                    sel_t = st.selectbox("Selecciona la Falla a Cerrar", options=list(t_opts.keys()), format_func=lambda x: t_opts[x])
+                    
+                    c_fc1, c_fc2 = st.columns(2)
+                    f_fin = c_fc1.date_input("📅 Fecha de Restablecimiento del Servicio")
+                    h_fin = c_fc2.time_input("🕒 Hora Exacta de Restablecimiento")
+                    
+                    if st.form_submit_button("Cerrar Ticket", type="primary"):
+                        r_orig = df_abiertos[df_abiertos['id'] == sel_t].iloc[0]
+                        ini_dt = r_orig['inicio_incidente']
+                        fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
+                        
+                        if fin_dt_val < ini_dt:
+                            st.error("❌ La fecha y hora de cierre no puede ser menor a la de inicio.")
+                        else:
+                            dur_h = round((fin_dt_val - ini_dt).total_seconds() / 3600, 2)
+                            with engine.begin() as conn:
+                                conn.execute(text("UPDATE incidents SET estado='Cerrado', fin_incidente=:f, duracion_horas=:d, conocimiento_tiempos='Total' WHERE id=:id"), {"f": fin_dt_val, "d": dur_h, "id": sel_t})
+                            log_audit("CLOSE TICKET", f"Ticket ID {sel_t} cerrado exitosamente.")
+                            load_data_rango.clear()
+                            st.rerun()
+
+        st.divider()
+        st.markdown("#### Edición Avanzada (Tabla Masiva)")
         papelera = st.toggle("🗑️ Explorar Papelera de Reciclaje")
         df_audit = enriquecer(load_data_rango(fecha_ini, fecha_fin, papelera, "Todas", "Todos", "Todos"))
 
@@ -823,30 +760,26 @@ if role in ('admin', 'auditor'):
                             for rid in f_sel['id']: conn.execute(text("UPDATE incidents SET deleted_at=CURRENT_TIMESTAMP WHERE id=:id"), {"id": int(rid)})
                         log_audit("DELETE (SOFT)", f"{len(f_sel)} registro(s)."); load_data_rango.clear(); st.rerun()
 
-            if h_cam and cb2.button("💾 Guardar Cambios (Cerrar Tickets)", type="primary", use_container_width=True):
+            if h_cam and cb2.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
                 with engine.begin() as conn:
                     for i, r in ed_df.iterrows():
                         if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
                             try:
                                 ini_dt = pd.to_datetime(r.get('inicio_incidente'))
                                 if pd.isnull(r.get('fin_incidente')):
-                                    fin_dt_sql = None
-                                    dur_u = 0
-                                    con_u = "Parcial"
+                                    fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
                                 else:
                                     fin_dt = pd.to_datetime(r.get('fin_incidente'))
                                     fin_dt_sql = fin_dt
                                     dur_u  = max(0, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
                                     con_u = "Total"
                             except: 
-                                fin_dt_sql = None
-                                dur_u = 0
-                                con_u = "Parcial"
+                                fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
                                 
                             conn.execute(text("""
                                 UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, estado=:est, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id
                             """), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "est": r.get('estado','Cerrado'), "idi": ini_dt, "idf": fin_dt_sql, "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur_u, "con": con_u, "id": int(r['id'])})
-                log_audit("UPDATE", "Edición masiva de registros.")
+                log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
                 load_data_rango.clear(); st.rerun()
 
             st.divider()
@@ -854,9 +787,9 @@ if role in ('admin', 'auditor'):
     t_idx += 1
 
 # ─────────────────────────────────────────────
-# TAB 4 — CONFIGURACIÓN
+# TAB 3 — CONFIGURACIÓN
 # ─────────────────────────────────────────────
-if role == 'admin':
+if role == 'admin' and len(tabs) > t_idx:
     with tabs[t_idx]:
         st.markdown("### ⚙️ Configuración del Sistema")
         st.caption("Administra catálogos y usuarios.")
