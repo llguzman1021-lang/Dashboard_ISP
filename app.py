@@ -26,7 +26,7 @@ ZONAS_SV = ["El Rosario", "ARG", "Tepezontes", "La Libertad", "El Tunco", "Costa
 EQUIPOS_SV = ["ONT", "Repetidor Wi-Fi", "Antena Ubiquiti", "OLT", "Caja NAP", "RB/Mikrotik", "Switch", "Servidor", "Fibra Principal", "Sistema UNIFI"]
 CAUSAS_RAIZ = ["Corte de Fibra por Terceros","Corte de Fibra (No Especificado)","Caída de Árboles sobre Fibra","Falla de Energía Comercial","Corrosión en Equipos","Daños por Fauna","Falla de Hardware","Falla de Configuración","Falla de Redundancia","Saturación de Tráfico","Saturación en Servidor UNIFI","Falla de Inicio en UNIFI","Mantenimiento Programado","Vandalismo o Hurto","Condiciones Climáticas"]
 CATEGORIAS = ["Red Multinet", "Cliente Corporativo", "Falla Interna (No afecta clientes)"]
-SERVICIOS = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)"]
+SERVICIOS = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)", "Internet/Cable TV", "Aplicativos internos"]
 CAT_INTERNA = "Falla Interna (No afecta clientes)"
 
 COORDS = {
@@ -56,7 +56,7 @@ st.markdown("""
 """, unsafe_allow_html=True)
 
 # =====================================================================
-# BASE DE DATOS: HARD RESET Y ESTRUCTURA PERFECTA
+# BASE DE DATOS: DESTRUCCIÓN controlada y REESTRUCTURACIÓN MASIVA
 # =====================================================================
 @st.cache_resource
 def get_engine(): return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
@@ -67,38 +67,40 @@ def check_pw(p, h): return bcrypt.checkpw(p.encode(), h.encode())
 
 def init_db():
     with engine.begin() as conn:
-        # 1. Seguridad de Usuarios
+        # 1. Conservar y verificar tabla de usuarios y logs
         conn.execute(text("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE, password_hash VARCHAR(255), role VARCHAR(20), pregunta VARCHAR(255), respuesta VARCHAR(255), failed_attempts INT DEFAULT 0, locked_until TIMESTAMP, is_banned BOOLEAN DEFAULT FALSE);"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, timestamp TIMESTAMP, username VARCHAR(50), action VARCHAR(50), details TEXT);"))
         
-        # 2. EL HARD RESET (Elimina la tabla sucia si existe)
+        # 2. EL HARD RESET (Eliminar tablas operativas viejas si no tienen la columna 'subzona')
         try:
-            check = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='incidents' AND column_name='fecha_inicio'")).fetchall()
-            if len(check) > 0:
-                conn.execute(text("DROP TABLE incidents CASCADE;"))
+            check = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='incidents' AND column_name='subzona'")).fetchall()
+            if len(check) == 0:
+                conn.execute(text("DROP TABLE IF EXISTS incidents CASCADE;"))
                 conn.execute(text("DROP TABLE IF EXISTS incidents_history CASCADE;"))
+                conn.execute(text("DROP TABLE IF EXISTS inventario_nodos CASCADE;"))
         except: pass
 
-        # 3. Estructura Perfecta (Cero strings de fecha)
+        # 3. Creación de la Estructura Empresarial Definitiva
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS incidents (
                 id SERIAL PRIMARY KEY,
-                zona VARCHAR(100),
+                zona VARCHAR(100) NOT NULL,
+                subzona VARCHAR(150),
+                afectacion_general BOOLEAN DEFAULT TRUE,
                 servicio VARCHAR(100),
                 categoria VARCHAR(100),
                 equipo_afectado VARCHAR(100),
                 inicio_incidente TIMESTAMPTZ NOT NULL,
-                fin_incidente TIMESTAMPTZ,
+                fin_incidente TIMESTAMPTZ NOT NULL,
                 clientes_afectados INT DEFAULT 0,
                 causa_raiz VARCHAR(150),
                 descripcion TEXT,
                 duracion_horas FLOAT,
-                conocimiento_tiempos VARCHAR(50),
                 deleted_at TIMESTAMPTZ DEFAULT NULL
             )
         """))
         conn.execute(text("CREATE TABLE IF NOT EXISTS incidents_history (id SERIAL PRIMARY KEY, incident_id INT, changed_by VARCHAR(50), changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, old_data TEXT, new_data TEXT)"))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS inventario_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(100), equipo VARCHAR(100), clientes INT DEFAULT 0, UNIQUE(zona, equipo));"))
+        conn.execute(text("CREATE TABLE IF NOT EXISTS inventario_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(100), subzona VARCHAR(150), equipo VARCHAR(100), clientes INT DEFAULT 0, UNIQUE(zona, subzona, equipo));"))
 
         # Usuarios Base
         if conn.execute(text("SELECT count(*) FROM users WHERE username='Admin'")).scalar() == 0:
@@ -113,7 +115,7 @@ def load_data_mes(m_idx, anio, include_deleted=False, zona_filtro="Todas", serv_
     end_d = calendar.monthrange(anio, m_idx)[1]
     e_date = f"{anio}-{m_idx:02d}-{end_d} 23:59:59"
     
-    q = "SELECT * FROM incidents WHERE ((inicio_incidente >= :s AND inicio_incidente <= :e) OR (fin_incidente >= :s AND fin_incidente <= :e) OR (inicio_incidente <= :s AND (fin_incidente >= :e OR fin_incidente IS NULL)))"
+    q = "SELECT * FROM incidents WHERE ((inicio_incidente >= :s AND inicio_incidente <= :e) OR (fin_incidente >= :s AND fin_incidente <= :e) OR (inicio_incidente <= :s AND fin_incidente >= :e))"
     
     if not include_deleted: q += " AND deleted_at IS NULL"
     else: q += " AND deleted_at IS NOT NULL"
@@ -137,21 +139,18 @@ def enriquecer_y_normalizar(df):
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     
-    # Manejo robusto de Timezones
     df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'])
     if df['inicio_incidente'].dt.tz is not None: df['inicio_incidente'] = df['inicio_incidente'].dt.tz_convert(SV_TZ)
     else: df['inicio_incidente'] = df['inicio_incidente'].dt.tz_localize(SV_TZ)
         
     df['fin_incidente'] = pd.to_datetime(df['fin_incidente'])
-    mask_fin = df['fin_incidente'].notna()
-    if mask_fin.any():
-        if df.loc[mask_fin, 'fin_incidente'].dt.tz is not None: df.loc[mask_fin, 'fin_incidente'] = df.loc[mask_fin, 'fin_incidente'].dt.tz_convert(SV_TZ)
-        else: df.loc[mask_fin, 'fin_incidente'] = df.loc[mask_fin, 'fin_incidente'].dt.tz_localize(SV_TZ)
+    if df['fin_incidente'].dt.tz is not None: df['fin_incidente'] = df['fin_incidente'].dt.tz_convert(SV_TZ)
+    else: df['fin_incidente'] = df['fin_incidente'].dt.tz_localize(SV_TZ)
 
     df['duracion_horas']     = pd.to_numeric(df['duracion_horas'], errors='coerce').fillna(0.0)
     df['clientes_afectados'] = pd.to_numeric(df['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     
-    df.loc[(df['clientes_afectados'] == 0) & (df['conocimiento_tiempos'] == 'Total'), 'categoria'] = CAT_INTERNA
+    df.loc[df['clientes_afectados'] == 0, 'categoria'] = CAT_INTERNA
     df['data_quality_flag'] = df['inicio_incidente'].notna() & df['fin_incidente'].notna()
     
     def eval_severidad(r):
@@ -161,10 +160,12 @@ def enriquecer_y_normalizar(df):
         return '🟡 P3 (Media)'
 
     df['Severidad'] = df.apply(eval_severidad, axis=1)
+    # Etiqueta combinada para vistas
+    df['zona_completa'] = df.apply(lambda r: f"{r['zona']} (General)" if r['afectacion_general'] else f"{r['zona']} - {r['subzona']}", axis=1)
     return df
 
 def calc_kpis(df, anio, m_idx):
-    base = {"db": 0.0, "acd": 0.0, "sla": 100.0, "mttr_ext": 0.0, "mttr_int": 0.0, "cl": 0, "mh": 0.0, "has_incomplete": False, "n_internas": 0, "p1_count": 0}
+    base = {"db": 0.0, "acd": 0.0, "sla": 100.0, "mttr_ext": 0.0, "mttr_int": 0.0, "cl": 0, "mh": 0.0, "n_internas": 0, "p1_count": 0}
     if df.empty: return base
     
     h_tot = calendar.monthrange(anio, m_idx)[1] * 24
@@ -172,7 +173,7 @@ def calc_kpis(df, anio, m_idx):
     m_end = SV_TZ.localize(datetime(anio, m_idx, calendar.monthrange(anio, m_idx)[1], 23, 59, 59))
 
     df_int = df[df['categoria'] == CAT_INTERNA]; df_ext = df[df['categoria'] != CAT_INTERNA]
-    base["n_internas"] = len(df_int); base["has_incomplete"] = not df['data_quality_flag'].all()
+    base["n_internas"] = len(df_int)
     base["p1_count"] = len(df[df['Severidad'] == '🔴 P1 (Crítica)'])
 
     if not df_int.empty:
@@ -185,7 +186,6 @@ def calc_kpis(df, anio, m_idx):
     m_acd = (df_ext['duracion_horas'] > 0) & (df_ext['clientes_afectados'] > 0)
     if m_acd.any(): base["acd"] = float((df_ext.loc[m_acd, 'duracion_horas'] * df_ext.loc[m_acd, 'clientes_afectados']).sum() / df_ext.loc[m_acd, 'clientes_afectados'].sum())
 
-    # SLA EXACTO (Con recortes a los límites del mes)
     v_kpi = df_ext[df_ext['data_quality_flag'] == True].copy()
     t_real = 0.0
     if not v_kpi.empty:
@@ -234,10 +234,10 @@ def generar_pdf(mes, anio, kpis, df):
     kpi_rows = [['Indicador', 'Valor', 'Descripción'], ['SLA (Disponibilidad)', f"{kpis['sla']:.2f}%", 'Porcentaje de tiempo operativo'], ['MTTR · Clientes', f"{kpis['mttr_ext']:.2f} hrs", 'Promedio de resolución'], ['ACD', f"{kpis['acd']:.2f} hrs", 'Afectación promedio por cliente'], ['Clientes Afectados', f"{kpis['cl']:,}", 'Usuarios impactados'], ['Impacto Acumulado', f"{kpis['db']/24:.2f} días", 'Días de caída equivalentes'], ['Fallas P1 (Críticas)', f"{kpis['p1_count']}", 'Incidentes críticos']]
     kpi_t = Table(kpi_rows, colWidths=[5*cm, 3.2*cm, 8.8*cm]); kpi_t.setStyle(table_style(RL_BLUE)); story.append(kpi_t); story.append(Spacer(1, 0.4*cm))
     if not df.empty:
-        df_ext_p = df[df['categoria'] != CAT_INTERNA]; story.append(Paragraph("2. Zonas con Mayor Tiempo de Afectación", s_sec)); top_z = df_ext_p.groupby('zona')['duracion_horas'].sum().nlargest(8).reset_index()
+        df_ext_p = df[df['categoria'] != CAT_INTERNA]; story.append(Paragraph("2. Zonas con Mayor Tiempo de Afectación", s_sec)); top_z = df_ext_p.groupby('zona_completa')['duracion_horas'].sum().nlargest(8).reset_index()
         if not top_z.empty:
             z_rows = [['Zona / Nodo', 'Horas de Caída', 'Días Equiv.']]
-            for _, r in top_z.iterrows(): z_rows.append([str(r['zona']), f"{r['duracion_horas']:.1f} hrs", f"{r['duracion_horas']/24:.2f}"])
+            for _, r in top_z.iterrows(): z_rows.append([str(r['zona_completa']), f"{r['duracion_horas']:.1f} hrs", f"{r['duracion_horas']/24:.2f}"])
             z_t = Table(z_rows, colWidths=[9*cm, 4.5*cm, 3.5*cm]); zs = table_style(RL_TEAL, val_col=False); zs.add('ALIGN', (1,0), (-1,-1), 'CENTER'); z_t.setStyle(zs); story.append(z_t)
         story.append(Spacer(1, 0.4*cm))
     story.append(Spacer(1, 1*cm)); story.append(HRFlowable(width="100%", thickness=0.5, color=RL_LGRAY, spaceAfter=6)); story.append(Paragraph(f"MULTINET NOC  ·  Generado el {now_str}  ·  Documento Confidencial", s_foot)); doc.build(story); buffer.seek(0)
@@ -314,7 +314,7 @@ if not st.session_state.logged_in:
 # SIDEBAR / PANEL LATERAL
 # =====================================================================
 with st.sidebar:
-    st.caption(f"Usuario: **{st.session_state.username}** | Producción v17.0")
+    st.caption(f"Usuario: **{st.session_state.username}** | Producción v18.0")
 
     anio_act = datetime.now(SV_TZ).year
     anios    = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
@@ -368,9 +368,6 @@ with tabs[0]:
         k6.metric("Impacto Acumulado", "0.0 días")
         st.divider()
     else:
-        incompletos = df_m[~df_m['data_quality_flag']]
-        if not incompletos.empty: st.warning(f"⚠️ **Alerta del Motor de Reglas:** Se detectaron {len(incompletos)} registro(s) sin hora de cierre. Se asume que siguen caídos o requieren auditoría.")
-            
         kpis = calc_kpis(df_m, a_sel, m_idx)
 
         df_p = pd.DataFrame(); kpis_p = None; dm = da = ds = dd = None
@@ -392,30 +389,30 @@ with tabs[0]:
         st.write("")
         _, k4, k5, k6, _ = st.columns([0.5, 2, 2, 2, 0.5])
         k4.metric("Falla Crítica (Mayor)", f"{kpis['mh']:.2f} hrs" if kpis['mh'] > 0 else "Óptimo ✅", help="Duración de la falla individual más larga del mes.")
-        k5.metric("Clientes Afectados", f"{kpis['cl']:,}", help="Suma total de usuarios impactados.")
+        k5.metric("Clientes Afectados", f"{kpis['cl']:,}", help="Suma total de usuarios impactados. (Estimación base si no hay dato exacto).")
         k6.metric("Impacto Acumulado", f"{kpis['db']/24:.1f} días", dd, "inverse", help="Total de horas de caída externa divididas entre 24.")
 
         if kpis['n_internas'] > 0 or kpis['p1_count'] > 0:
             st.write("")
             _, ki, kp, _ = st.columns([0.5, 2, 2, 2.5])
-            ki.metric(f"MTTR · Internas ({kpis['n_internas']} ev)", f"{kpis['mttr_int']:.2f} hrs", help="Tiempo promedio de resolución de fallas internas.")
+            ki.metric(f"MTTR · Internas ({kpis['n_internas']} ev)", f"{kpis['mttr_int']:.2f} hrs", help="Tiempo promedio de resolución de fallas internas. No impacta SLA.")
             kp.metric(f"Eventos P1 (Críticos)", f"{kpis['p1_count']} alertas", delta_color="inverse", help="Incidentes > 12h o > 1000 clientes.")
 
         with st.expander("ℹ️ ¿Cómo se calculan estos indicadores?"):
             st.markdown("""
-            * **SLA:** Total de horas del mes menos horas reales de caída. Si una falla cruza entre meses (ej. Mar a Abr), el tiempo se divide matemáticamente en cada mes. Fallas simultáneas se fusionan. Excluye internas.
+            * **SLA:** Total de horas del mes menos horas reales de caída. Si una falla cruza entre meses, el tiempo se divide matemáticamente. Fallas simultáneas se fusionan. Excluye internas.
             * **MTTR:** (Suma de duración) / (Cantidad de fallas).
             * **ACD:** (Duración x Clientes) / Total Clientes. Impacto real sentido por los usuarios.
             """)
         st.divider()
 
-        st.markdown("### 🗺️ Análisis Geoespacial y Causas")
+        st.markdown("### 🗺️ Análisis Geoespacial y Causas Principales")
         df_map = df_m.copy()
         df_map['lat'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["San Salvador (Central)"])[0])
         df_map['lon'] = df_map['zona'].apply(lambda x: COORDS.get(x, COORDS["San Salvador (Central)"])[1])
-        agg = df_map.groupby(['zona','lat','lon']).agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum')).reset_index()
+        agg = df_map.groupby(['zona_completa','lat','lon']).agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum')).reset_index()
 
-        fig_m = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona", size="Clientes", color="Horas", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
+        fig_m = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona_completa", size="Clientes", color="Horas", color_continuous_scale="Inferno", zoom=9, mapbox_style="carto-darkmatter")
         fig_m.add_trace(go.Scattermapbox(mode="lines", lat=[13.4900, 13.5850, 13.6929], lon=[-89.3245, -89.2890, -89.2182], line=dict(width=2, color='rgba(241,92,34,0.7)'), name="Ruta Principal"))
         fig_m.update_layout(margin=dict(l=0,r=0,t=0,b=0))
         st.plotly_chart(fig_m, use_container_width=True)
@@ -430,7 +427,7 @@ with tabs[0]:
         if sel_p and sel_p.selection.point_indices:
             cx = dc.iloc[sel_p.selection.point_indices[0]]['causa_raiz']
             st.info(f"🔍 **Detalle causa:** {cx}")
-            st.dataframe(df_m[df_m['causa_raiz'] == cx][['inicio_incidente','zona','Severidad','duracion_horas','descripcion']], hide_index=True)
+            st.dataframe(df_m[df_m['causa_raiz'] == cx][['inicio_incidente','zona_completa','Severidad','duracion_horas','descripcion']], hide_index=True)
 
         st.divider()
         st.markdown("### 📊 Desglose de Equipos y Línea de Tiempo")
@@ -441,7 +438,7 @@ with tabs[0]:
 
         dg = df_m[df_m['data_quality_flag'] == True].copy()
         if not dg.empty:
-            fg = px.timeline(dg, x_start="inicio_incidente", x_end="fin_incidente", y="zona", color="Severidad", color_discrete_sequence=PALETA_CORP, title="Gantt de Fallas Simultáneas")
+            fg = px.timeline(dg, x_start="inicio_incidente", x_end="fin_incidente", y="zona_completa", color="Severidad", color_discrete_sequence=PALETA_CORP, title="Gantt de Fallas Simultáneas")
             fg.update_yaxes(autorange="reversed"); fg.update_traces(marker_line_width=1, marker_line_color="rgba(255,255,255,0.5)")
             fg.update_layout(margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)"); st.plotly_chart(fg, use_container_width=True)
 
@@ -460,8 +457,8 @@ with tabs[1]:
         
         c_q1, c_q2, c_q3 = st.columns(3)
         c_q1.metric("Score de Confianza", f"{score}%")
-        c_q2.metric("Registros Sin Hora Cierre", f"{tot_regs - c_completos}", delta="Revisar" if (tot_regs - c_completos) > 0 else "OK", delta_color="inverse")
-        c_q3.metric("Fallas P1", f"{len(df_m[df_m['Severidad'] == '🔴 P1 (Crítica)'])}")
+        c_q2.metric("Registros Íntegros", f"{c_completos} / {tot_regs}")
+        c_q3.metric("Fallas P1 Detectadas", f"{len(df_m[df_m['Severidad'] == '🔴 P1 (Crítica)'])}")
 
         st.divider()
         c_cor1, c_cor2 = st.columns(2)
@@ -473,7 +470,7 @@ with tabs[1]:
             st.plotly_chart(fig_heat, use_container_width=True)
         with c_cor2:
             st.markdown("#### Dispersión: Duración vs. Clientes")
-            fig_scat = px.scatter(df_m, x='duracion_horas', y='clientes_afectados', color='Severidad', size='duracion_horas', hover_data=['zona', 'causa_raiz'], color_discrete_sequence=PALETA_CORP)
+            fig_scat = px.scatter(df_m, x='duracion_horas', y='clientes_afectados', color='Severidad', size='duracion_horas', hover_data=['zona_completa', 'causa_raiz'], color_discrete_sequence=PALETA_CORP)
             fig_scat.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_scat, use_container_width=True)
 
@@ -489,13 +486,20 @@ if st.session_state.role == 'admin':
 
         # SUBTAB 1: INGRESO MANUAL
         with tab_manual:
-            try: cmdb_df = pd.read_sql("SELECT zona, equipo, clientes FROM inventario_nodos", engine)
-            except: cmdb_df = pd.DataFrame(columns=['zona', 'equipo', 'clientes'])
+            try: cmdb_df = pd.read_sql("SELECT zona, subzona, equipo, clientes FROM inventario_nodos", engine)
+            except: cmdb_df = pd.DataFrame(columns=['zona', 'subzona', 'equipo', 'clientes'])
             
             cf, ccx = st.columns([2, 1], gap="large")
             with cf:
                 with st.container(border=True):
-                    z = st.selectbox("📍 Nodo o Zona", ZONAS_SV)
+                    c_z1, c_z2 = st.columns([1, 1])
+                    z = c_z1.selectbox("📍 Nodo Principal", ZONAS_SV)
+                    afect_gen = c_z2.checkbox("🚨 Falla General (Afecta todo el nodo)", value=True)
+                    if not afect_gen:
+                        sz = st.text_input("📍 Especifique Sub-zona (Ej. San Antonio Masahuat)")
+                    else:
+                        sz = "General"
+                        
                     c1, c2 = st.columns(2)
                     srv = c1.selectbox("🌐 Servicio", SERVICIOS)
                     cat = c2.selectbox("🏢 Segmento", CATEGORIAS)
@@ -505,17 +509,12 @@ if st.session_state.role == 'admin':
                     ct1, ct2 = st.columns(2)
                     with ct1:
                         fi     = st.date_input("📅 Fecha de Inicio")
-                        hi_val = st.time_input("🕒 Hora de Apertura")
+                        hi_val = st.time_input("🕒 Hora de Inicio")
                     with ct2:
-                        st.markdown("<p style='font-size:14px; margin-bottom:5px;'>¿Servicio Restaurado?</p>", unsafe_allow_html=True)
-                        f_resuelto = st.toggle("Sí, ya tiene hora de cierre", value=True)
-                        if f_resuelto:
-                            ff     = st.date_input("📅 Fecha de Cierre")
-                            hf_val = st.time_input("🕒 Hora de Cierre")
-                        else:
-                            ff = None; hf_val = None
+                        ff     = st.date_input("📅 Fecha de Cierre")
+                        hf_val = st.time_input("🕒 Hora de Cierre")
 
-                    dur = max(0, round((datetime.combine(ff, hf_val) - datetime.combine(fi, hi_val)).total_seconds() / 3600, 2)) if f_resuelto else 0
+                    dur = max(0, round((datetime.combine(ff, hf_val) - datetime.combine(fi, hi_val)).total_seconds() / 3600, 2))
                     st.divider()
 
                     cf1, cf2 = st.columns(2)
@@ -525,28 +524,28 @@ if st.session_state.role == 'admin':
                         else:
                             default_cl = 0
                             if not cmdb_df.empty:
-                                match = cmdb_df[(cmdb_df['zona'] == z) & (cmdb_df['equipo'] == eq)]
+                                match = cmdb_df[(cmdb_df['zona'] == z) & (cmdb_df['subzona'] == sz) & (cmdb_df['equipo'] == eq)]
                                 if not match.empty: default_cl = int(match['clientes'].iloc[0])
                             cl_f = st.number_input("👤 Clientes Afectados", min_value=0, value=default_cl, step=1)
                     cr   = cf2.selectbox("🛠️ Causa Raíz", CAUSAS_RAIZ)
                     desc = st.text_area("📝 Descripción del Evento")
 
-                    if st.button("💾 Guardar Registro", type="primary"):
-                        if f_resuelto and (fi > ff or (fi == ff and hi_val > hf_val)):
+                    if st.button("💾 Guardar Registro Cerrado", type="primary"):
+                        if (fi > ff or (fi == ff and hi_val > hf_val)):
                             st.toast("❌ Error lógico: el cierre es anterior al inicio.", icon="🚨")
                         else:
                             with st.spinner("Guardando..."):
                                 try:
                                     inicio_dt = SV_TZ.localize(datetime.combine(fi, hi_val))
-                                    fin_dt = SV_TZ.localize(datetime.combine(ff, hf_val)) if f_resuelto else None
+                                    fin_dt = SV_TZ.localize(datetime.combine(ff, hf_val))
                                     
                                     with engine.begin() as conn:
                                         conn.execute(text("""
-                                            INSERT INTO incidents (zona,servicio,categoria,equipo_afectado,inicio_incidente,fin_incidente,clientes_afectados,causa_raiz,descripcion,duracion_horas,conocimiento_tiempos)
-                                            VALUES (:z,:s,:c,:e,:idi,:idf,:cl,:cr,:d,:dur,:con)
-                                        """), {"z": z, "s": srv, "c": cat, "e": eq, "idi": inicio_dt, "idf": fin_dt, "cl": cl_f, "cr": cr, "d": desc, "dur": dur, "con": "Total" if f_resuelto else "Parcial"})
-                                        conn.execute(text("INSERT INTO inventario_nodos (zona, equipo, clientes) VALUES (:z, :e, :cl) ON CONFLICT (zona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes"), {"z": z, "e": eq, "cl": cl_f})
-                                    log_audit("INSERT", f"Falla en {z} [{cat}]"); load_data_mes.clear(); st.toast("✅ Registro guardado exitosamente.", icon="🎉"); time.sleep(1); st.rerun()
+                                            INSERT INTO incidents (zona, subzona, afectacion_general, servicio, categoria, equipo_afectado, inicio_incidente, fin_incidente, clientes_afectados, causa_raiz, descripcion, duracion_horas)
+                                            VALUES (:z, :sz, :ag, :s, :c, :e, :idi, :idf, :cl, :cr, :d, :dur)
+                                        """), {"z": z, "sz": sz, "ag": afect_gen, "s": srv, "c": cat, "e": eq, "idi": inicio_dt, "idf": fin_dt, "cl": cl_f, "cr": cr, "d": desc, "dur": dur})
+                                        conn.execute(text("INSERT INTO inventario_nodos (zona, subzona, equipo, clientes) VALUES (:z, :sz, :e, :cl) ON CONFLICT (zona, subzona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes"), {"z": z, "sz": sz, "e": eq, "cl": cl_f})
+                                    log_audit("INSERT", f"Falla en {z} - {sz} [{cat}]"); load_data_mes.clear(); st.toast("✅ Registro guardado exitosamente.", icon="🎉"); time.sleep(1); st.rerun()
                                 except Exception as e: st.toast(f"Error al guardar: {e}", icon="❌")
 
             with ccx:
@@ -554,13 +553,13 @@ if st.session_state.role == 'admin':
                 if not df_m.empty:
                     for _, r in df_m.sort_values('id', ascending=False).head(5).iterrows():
                         with st.container(border=True):
-                            st.markdown(f"**{'🔧' if r.get('categoria')==CAT_INTERNA else '📡'} {r['zona']}**")
+                            st.markdown(f"**{'🔧' if r.get('categoria')==CAT_INTERNA else '📡'} {r['zona_completa']}**")
                             st.caption(f"{str(r['causa_raiz'])[:22]}... | ⏳ {r['duracion_horas']}h")
 
         # SUBTAB 2: IMPORTADOR MASIVO
         with tab_masivo:
             st.markdown("### 📥 Subir Archivo CSV (Desde Google Sheets)")
-            st.info("Para importar datos, asegúrate de que tu archivo CSV tenga las siguientes columnas exactamente con estos nombres:\n`zona`, `servicio`, `categoria`, `equipo_afectado`, `inicio_incidente` (formato YYYY-MM-DD HH:MM:SS), `fin_incidente` (formato YYYY-MM-DD HH:MM:SS), `clientes_afectados`, `causa_raiz`, `descripcion`")
+            st.info("Para importar datos, tu archivo CSV debe tener las siguientes columnas:\n`zona`, `subzona` (ej. General o Nombre exacto), `afectacion_general` (True/False), `servicio`, `categoria`, `equipo_afectado`, `inicio_incidente` (YYYY-MM-DD HH:MM:SS), `fin_incidente` (YYYY-MM-DD HH:MM:SS), `clientes_afectados`, `causa_raiz`, `descripcion`")
             
             uploaded_file = st.file_uploader("Arrastra tu archivo CSV aquí", type=["csv"])
             if uploaded_file is not None:
@@ -573,9 +572,8 @@ if st.session_state.role == 'admin':
                             df_up['fin_incidente'] = pd.to_datetime(df_up['fin_incidente'])
                             df_up['duracion_horas'] = (df_up['fin_incidente'] - df_up['inicio_incidente']).dt.total_seconds() / 3600.0
                             df_up['duracion_horas'] = df_up['duracion_horas'].fillna(0).round(2)
-                            df_up['conocimiento_tiempos'] = 'Total'
                             
-                            df_sql = df_up[['zona', 'servicio', 'categoria', 'equipo_afectado', 'inicio_incidente', 'fin_incidente', 'clientes_afectados', 'causa_raiz', 'descripcion', 'duracion_horas', 'conocimiento_tiempos']].copy()
+                            df_sql = df_up[['zona', 'subzona', 'afectacion_general', 'servicio', 'categoria', 'equipo_afectado', 'inicio_incidente', 'fin_incidente', 'clientes_afectados', 'causa_raiz', 'descripcion', 'duracion_horas']].copy()
                             
                             with engine.begin() as conn:
                                 df_sql.to_sql('incidents', conn, if_exists='append', index=False)
@@ -583,13 +581,12 @@ if st.session_state.role == 'admin':
                             load_data_mes.clear(); st.success("✅ Importación completada."); time.sleep(2); st.rerun()
                 except Exception as e: st.error(f"Error al leer el archivo. Revisa el formato. Detalles: {e}")
 
-    # ── TAB 5: AUDITORÍA BD Y PAPELERA ──
+    # ── TAB 4: AUDITORÍA BD Y PAPELERA ──
     with tabs[3]:
         st.markdown("### 🗂️ Auditoría de Base de Datos")
         
         papelera = st.toggle("🗑️ Ver Papelera de Reciclaje (Registros Eliminados)")
         
-        # Cargar todos los datos del mes sin importar zona, para auditar todo
         df_audit = load_data_mes(m_idx, a_sel, include_deleted=papelera, zona_filtro="Todas", serv_filtro="Todos", seg_filtro="Todos")
         
         if df_audit.empty:
@@ -602,7 +599,7 @@ if st.session_state.role == 'admin':
             tot_p = max(1, math.ceil(len(df_d) / 15)); pg = c_pg.number_input("Página", 1, tot_p, 1, key="p_bd")
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy(); df_page.insert(0, "Sel", False)
 
-            drop_cols = [c for c in ['deleted_at', 'Severidad', 'Recomendacion_Auto'] if c in df_page.columns]
+            drop_cols = [c for c in ['deleted_at', 'Severidad', 'Recomendacion_Auto', 'zona_completa'] if c in df_page.columns]
             
             ed_df = st.data_editor(
                 df_page.drop(columns=drop_cols, errors='ignore'),
@@ -642,14 +639,14 @@ if st.session_state.role == 'admin':
                         if not o.equals(r.drop('Sel')):
                             log_version(int(r['id']), o.to_json(default_handler=str), r.drop('Sel').to_json(default_handler=str))
                             dur = max(0, round((pd.to_datetime(r.get('fin_incidente')) - pd.to_datetime(r.get('inicio_incidente'))).total_seconds() / 3600, 2)) if r.get('fin_incidente') and pd.notna(r.get('fin_incidente')) else 0
-                            conn.execute(text("UPDATE incidents SET zona=:z, servicio=:s, categoria=:c, equipo_afectado=:e, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur WHERE id=:id"), {"z": r.get('zona',''), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "idi": r.get('inicio_incidente', None), "idf": r.get('fin_incidente', None), "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur, "id": int(r['id'])})
+                            conn.execute(text("UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur WHERE id=:id"), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "idi": r.get('inicio_incidente', None), "idf": r.get('fin_incidente', None), "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur, "id": int(r['id'])})
                 log_audit("UPDATE", "Registros editados."); load_data_mes.clear(); st.toast("Cambios guardados.", icon="✅"); time.sleep(1); st.rerun()
 
             st.divider()
             c_e1, c_e2 = st.columns(2)
             with c_e1: st.download_button("📥 Descargar CSV Crudo", df_d.drop(columns=drop_cols, errors='ignore').to_csv(index=False).encode(), f"NOC_{m_sel}_{a_sel}.csv", "text/csv", use_container_width=True)
 
-    # ── TAB 6: USUARIOS Y LOGS ──
+    # ── TAB 5: USUARIOS Y LOGS ──
     with tabs[4]:
         cu, clg = st.columns([1, 2], gap="large")
 
