@@ -147,8 +147,11 @@ def fetch_and_sync_smartolt() -> dict:
         headers = {"X-Token": api_key}
         res = requests.get(f"{base_url}/api/onu/get_all_onus_details", headers=headers, timeout=15)
         
+        if res.status_code == 403: return {"_error": "Error HTTP 403: Acceso denegado. Posible bloqueo por Rate Limit o API Key incorrecta."}
         if res.status_code != 200: return {"_error": f"Error HTTP {res.status_code}."}
-        data = res.json()
+        
+        try: data = res.json()
+        except: return {"_error": "La API no devolvió JSON."}
         
         onus_list = []
         if isinstance(data, list): onus_list = data
@@ -190,15 +193,16 @@ def smartolt_status_badge() -> str:
     data = fetch_and_sync_smartolt()
     if "_error" in data: return f"🔴 {data['_error']}"
     if not data: return "🟡 SmartOLT: Sin datos"
-    return f"🟢 API Sincronizada: {len(data)} OLTs · {sum(v for v in data.values()):,} ONTs"
+    return f"🟢 API Live: {len(data)} OLTs · {sum(v for v in data.values()):,} ONTs"
 
 # =====================================================================
-# CARGA Y ENRIQUECIMIENTO 
+# CARGA Y ENRIQUECIMIENTO (RENDIMIENTO)
 # =====================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(fecha_ini: date, fecha_fin: date, include_deleted: bool = False, zona_filtro: str = "Todas", serv_filtro: str = "Todos", seg_filtro: str = "Todos") -> pd.DataFrame:
     s_date = datetime.combine(fecha_ini, datetime_time(0, 0, 0))
     e_date = datetime.combine(fecha_fin, datetime_time(23, 59, 59))
+    
     conds = ["((inicio_incidente >= :s AND inicio_incidente <= :e) OR (fin_incidente >= :s AND fin_incidente <= :e) OR (inicio_incidente <= :e AND estado = 'Abierto'))"]
     conds.append("deleted_at IS NULL" if not include_deleted else "deleted_at IS NOT NULL")
     if zona_filtro != "Todas": conds.append(f"zona = '{zona_filtro.replace(chr(39), chr(39)*2)}'")
@@ -237,7 +241,7 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =====================================================================
-# KPIs MATEMÁTICOS (Excluye tickets abiertos del SLA y MTTR)
+# KPIs MATEMÁTICOS
 # =====================================================================
 def _merge_intervals(intervals: list) -> list:
     if not intervals: return []
@@ -264,6 +268,8 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     if df.empty: return base
 
     base["abiertos"] = len(df[df['estado'] == 'Abierto'])
+
+    # Solo usamos tickets cerrados para cálculos de SLA y MTTR
     df_cerrados = df[df['estado'] == 'Cerrado']
     
     df_int = df_cerrados[df_cerrados['categoria'] == CAT_INTERNA]; df_ext = df_cerrados[df_cerrados['categoria'] != CAT_INTERNA]
@@ -403,10 +409,10 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =====================================================================
-# SIDEBAR 
+# SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v26.0")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v26.1")
     st.caption(smartolt_status_badge())
     st.divider()
 
@@ -454,9 +460,8 @@ tabs = st.tabs(tab_labels)
 with tabs[0]:
     st.title(f"📊 Rendimiento de Red: {label_periodo}")
 
-    # ===== CORRECCIÓN AQUÍ =====
-    # Si la BD está vacía, mostramos el mensaje pero no usamos st.stop()
-    # para que el resto del código y pestañas sí se puedan cargar.
+    # Corregido: En lugar de usar st.stop() y cortar el script, validamos si hay datos 
+    # y solo dibujamos las métricas si df_m no está vacío.
     if df_m.empty: 
         st.success("🟢 Sin incidentes registrados en los filtros seleccionados. ¡La red está al 100%!")
     else:
@@ -480,21 +485,23 @@ with tabs[0]:
 
         c1, c2, c3, c4, c5 = st.columns(5)
         c1.metric("SLA Global", f"{kpis['global']['sla']:.3f}%", delta=_delta('global','sla', fmt="{:+.3f}", suffix="%"), delta_color="normal", help="Disponibilidad total. Intervalos solapados fusionados — sin doble descuento.")
-        c2.metric("Total Eventos", kpis['global']['total_fallas'], delta=_delta('global','total_fallas', fmt="{:+.0f}"), delta_color="inverse", help="Suma de todas las fallas externas cerradas.")
-        c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} horas", delta=_delta('global','mtbf', fmt="{:+.1f}", suffix="h"), delta_color="normal", help="Tiempo Medio Entre Fallas.")
+        c2.metric("Total Eventos Registrados", kpis['global']['total_fallas'], delta=_delta('global','total_fallas', fmt="{:+.0f}"), delta_color="inverse", help="Suma de todas las fallas externas registradas.")
+        c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} horas", delta=_delta('global','mtbf', fmt="{:+.1f}", suffix="h"), delta_color="normal", help="Tiempo Medio Entre Fallas — con datos exactos.")
         c4.metric("Impacto Acumulado", f"{kpis['global']['db']/24:.2f} días", delta=_delta('global','db', divisor=24, fmt="{:+.2f}", suffix="d"), delta_color="inverse", help="Total de horas de caída / 24.")
         c5.metric("Falla Mayor (Pico)", f"{kpis['global']['mh']:.1f} horas", delta=_delta('global','mh', fmt="{:+.1f}", suffix="h"), delta_color="inverse", help="Duración del evento más largo del periodo.")
 
         st.divider()
         # ── 3. IMPACTO A CLIENTES ──
         st.markdown("### 👥 Impacto Directo a Clientes (Datos Exactos)")
-        if kpis['t1']['fallas'] == 0: st.info("ℹ️ No hay incidentes masivos cerrados con tiempos exactos.")
+        st.caption("*Solo contempla eventos con duración exacta y clientes afectados > 0.*")
+
+        if kpis['t1']['fallas'] == 0: st.info("ℹ️ No hay incidentes masivos con tiempos exactos en este periodo.")
         else:
             t1a, t1b, t1c, t1d = st.columns(4)
             t1a.metric("Fallas Completas", kpis['t1']['fallas'], delta=_delta('t1','fallas', fmt="{:+.0f}"), delta_color="inverse", help="Eventos que poseen duración exacta y número real de clientes > 0.")
-            t1b.metric("MTTR Real (Resolución)", f"{kpis['t1']['mttr']:.2f} horas", delta=_delta('t1','mttr', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Tiempo de arreglo de fallas masivas.")
-            t1c.metric("ACD Real (Afectación)", f"{kpis['t1']['acd']:.2f} horas", delta=_delta('t1','acd', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Afectación promedio percibida por cliente.")
-            t1d.metric("Clientes Afectados", f"{kpis['t1']['clientes']:,}", delta=_delta('t1','clientes', fmt="{:+.0f}"), delta_color="inverse", help="Suma total de clientes que sufrieron cortes.")
+            t1b.metric("MTTR Real (Resolución)", f"{kpis['t1']['mttr']:.2f} horas", delta=_delta('t1','mttr', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Tiempo Promedio de Resolución. Tiempo de arreglo de fallas masivas.")
+            t1c.metric("ACD Real (Afectación)", f"{kpis['t1']['acd']:.2f} horas", delta=_delta('t1','acd', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Afectación Promedio por Cliente. Sensación real de corte por usuario.")
+            t1d.metric("Clientes Afectados", f"{kpis['t1']['clientes']:,}", delta=_delta('t1','clientes', fmt="{:+.0f}"), delta_color="inverse", help="Suma total de clientes que sufrieron cortes en este mes.")
 
         st.divider()
         # ── 4. SALUD DE DATOS ──
@@ -503,8 +510,8 @@ with tabs[0]:
 
         for container, label, emoji_on, emoji_off, metric_a, val_a, help_a, metric_b, val_b, help_b in [
             (col_t2, "Fallas de Red Pura", "🟡","🟢", "Eventos sin Clientes", kpis['t2']['fallas'], "Hora exacta, 0 clientes. Sí afectan SLA.", "MTTR Infraestructura", f"{kpis['t2']['mttr']:.2f} horas", "Resolución de fallas de red aisladas."),
-            (col_t3, "Eventos Incompletos", "🔴","🟢", "Fallas Sin Tiempo", kpis['t3']['fallas'], "Fallas cerradas sin hora exacta.", "Clientes Estimados", f"{kpis['t3']['clientes_est']:,}", "Posibles afectados sin duración medible."),
-            (col_int, "Internas / Datacenter", "🔵","🟢", "Eventos Internos", kpis['int']['fallas'], "No impactan SLA externo.", "MTTR Interno", f"{kpis['int']['mttr']:.2f} horas", "Tiempo de resolución en Datacenter."),
+            (col_t3, "Eventos Incompletos", "🔴","🟢", "Fallas Sin Tiempo", kpis['t3']['fallas'], "Sin hora de inicio o cierre. Excluidas del SLA.", "Clientes Estimados", f"{kpis['t3']['clientes_est']:,}", "Posibles afectados sin duración medible."),
+            (col_int, "Internas / Mantenimiento", "🔵","🟢", "Eventos Internos", kpis['int']['fallas'], "No impactan SLA externo.", "MTTR Interno", f"{kpis['int']['mttr']:.2f} horas", "Tiempo de resolución interno."),
         ]:
             v = val_a if isinstance(val_a, int) else kpis['t3']['fallas']
             with container:
