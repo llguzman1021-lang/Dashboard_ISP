@@ -18,10 +18,6 @@ from reportlab.lib.units import cm
 st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="🌐")
 SV_TZ = pytz.timezone('America/El_Salvador')
 
-# 💰 CONFIGURACIÓN FINANCIERA
-ARPU_USD = 30.0 
-HOURS_MONTH = 720.0 
-
 PALETA_CORP = ['#f15c22', '#1d2c59', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b']
 MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
@@ -48,8 +44,8 @@ st.markdown("""
     div[data-testid="stButton-delete"] > button { background-color: #c0392b !important; color: white !important; }
     div[data-testid="stButton-save"] > button  { background-color: #27ae60 !important; color: white !important; }
     div.stButton > button:first-child { background-color: #0068c9 !important; color: white !important; }
-    [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 32px !important; font-weight: 800 !important; }
-    [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 16px !important; font-weight: 500 !important; }
+    [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 36px !important; font-weight: 800 !important; }
+    [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 15px !important; font-weight: 500 !important; }
     div[data-testid="stTabs"] { background-color: transparent; }
     button[data-baseweb="tab"] { background-color: #1e1e2f !important; border-radius: 12px 12px 0 0 !important; margin-right: 10px !important; padding: 16px 32px !important; border: 2px solid #333 !important; border-bottom: none !important; transition: all 0.3s; }
     button[data-baseweb="tab"]:hover { background-color: #2a2a3f !important; }
@@ -135,7 +131,7 @@ def load_data_mes(m_idx, anio, include_deleted=False, zona_filtro="Todas", serv_
     except: return pd.DataFrame()
 
 # =====================================================================
-# ENRIQUECIMIENTO, REGLAS Y NORMALIZACIÓN
+# ENRIQUECIMIENTO Y NORMALIZACIÓN
 # =====================================================================
 def enriquecer_y_normalizar(df):
     if df.empty: return df
@@ -153,7 +149,8 @@ def enriquecer_y_normalizar(df):
     df['duracion_horas']     = pd.to_numeric(df['duracion_horas'], errors='coerce').fillna(0.0)
     df['clientes_afectados'] = pd.to_numeric(df['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     
-    # Se removió la regla estricta de "Si clientes = 0 es Interna". Ahora depende puramente del Segmento ingresado.
+    df.loc[df['clientes_afectados'] == 0, 'categoria'] = CAT_INTERNA
+    df['data_quality_flag'] = (df['conocimiento_tiempos'] == 'Total')
     
     def eval_severidad(r):
         if r['categoria'] == CAT_INTERNA: return '🟢 P4 (Interna)'
@@ -166,14 +163,13 @@ def enriquecer_y_normalizar(df):
     return df
 
 def calc_kpis(df, anio, m_idx):
-    """Calcula las métricas divididas en Niveles de Calidad (Tiers)"""
+    """Calcula las métricas estructuradas lógicamente por Niveles (Tiers)"""
     base = {
-        "global": {"sla": 100.0, "total_fallas": 0, "mtbf": 0.0, "loss_usd": 0.0},
-        "t1": {"fallas": 0, "mttr": 0.0, "acd": 0.0, "clientes": 0, "mh": 0.0, "db": 0.0},
-        "t2": {"fallas": 0, "mttr": 0.0, "impacto_hrs": 0.0},
+        "global": {"sla": 100.0, "total_fallas": 0, "mtbf": 0.0, "db": 0.0, "mh": 0.0, "p1": 0},
+        "t1": {"fallas": 0, "mttr": 0.0, "acd": 0.0, "clientes": 0},
+        "t2": {"fallas": 0, "mttr": 0.0},
         "t3": {"fallas": 0, "clientes_est": 0, "zona_top": "N/A"},
         "int": {"fallas": 0, "mttr": 0.0},
-        "p1_count": 0,
         "has_incomplete": False
     }
     
@@ -186,9 +182,7 @@ def calc_kpis(df, anio, m_idx):
     df_int = df[df['categoria'] == CAT_INTERNA]
     df_ext = df[df['categoria'] != CAT_INTERNA]
 
-    base["p1_count"] = len(df[df['Severidad'] == '🔴 P1 (Crítica)'])
-
-    # --- INTERNAS ---
+    # --- MÉTRICAS INTERNAS ---
     base["int"]["fallas"] = len(df_int)
     if not df_int.empty:
         iv = df_int[df_int['duracion_horas'] > 0]
@@ -198,19 +192,18 @@ def calc_kpis(df, anio, m_idx):
         base["global"]["mtbf"] = float(h_tot)
         return base
 
-    # --- TIER 3 (Incompletas / Sin tiempos exactos) ---
+    # --- TIER 3 (Incompletas / Sin tiempos) ---
     df_t3 = df_ext[df_ext['conocimiento_tiempos'] != 'Total']
     base["has_incomplete"] = not df_t3.empty
     base["t3"]["fallas"] = len(df_t3)
     base["t3"]["clientes_est"] = int(df_t3['clientes_afectados'].sum())
     if not df_t3.empty: base["t3"]["zona_top"] = df_t3['zona_completa'].mode()[0]
 
-    # --- TIER 2 (Solo Tiempos, Sin Clientes) ---
+    # --- TIER 2 (Medidas en Tiempo, Sin Clientes) ---
     df_t2 = df_ext[(df_ext['conocimiento_tiempos'] == 'Total') & (df_ext['clientes_afectados'] == 0)]
     base["t2"]["fallas"] = len(df_t2)
     if not df_t2.empty:
         base["t2"]["mttr"] = float(df_t2['duracion_horas'].mean())
-        base["t2"]["impacto_hrs"] = float(df_t2['duracion_horas'].sum())
 
     # --- TIER 1 (Perfectas: Tiempos y Clientes) ---
     df_t1 = df_ext[(df_ext['conocimiento_tiempos'] == 'Total') & (df_ext['clientes_afectados'] > 0)]
@@ -218,18 +211,20 @@ def calc_kpis(df, anio, m_idx):
     if not df_t1.empty:
         base["t1"]["mttr"] = float(df_t1['duracion_horas'].mean())
         base["t1"]["clientes"] = int(df_t1['clientes_afectados'].sum())
-        base["t1"]["mh"] = float(df_t1['duracion_horas'].max())
-        base["t1"]["db"] = float(df_t1['duracion_horas'].sum())
-        
         total_horas_cliente = (df_t1['duracion_horas'] * df_t1['clientes_afectados']).sum()
         base["t1"]["acd"] = float(total_horas_cliente / base["t1"]["clientes"]) if base["t1"]["clientes"] > 0 else 0.0
-        base["global"]["loss_usd"] = float(total_horas_cliente * (ARPU_USD / HOURS_MONTH))
 
-    # --- GLOBAL (SLA y MTBF usan T1 + T2) ---
+    # --- GLOBAL (SLA, MTBF, y Acumulados usan T1 + T2) ---
     base["global"]["total_fallas"] = len(df_ext)
+    base["global"]["p1"] = len(df_ext[df_ext['Severidad'] == '🔴 P1 (Crítica)'])
+    
     df_valid_times = pd.concat([df_t1, df_t2])
     t_real = 0.0
     if not df_valid_times.empty:
+        base["global"]["db"] = float(df_valid_times['duracion_horas'].sum())
+        base["global"]["mh"] = float(df_valid_times['duracion_horas'].max())
+        
+        # Calcular traslapes exactos para SLA
         s_dt = df_valid_times['inicio_incidente'].clip(lower=m_start)
         e_dt = df_valid_times['fin_incidente'].clip(upper=m_end)
         valid = s_dt.notna() & e_dt.notna() & (s_dt <= e_dt)
@@ -243,7 +238,7 @@ def calc_kpis(df, anio, m_idx):
 
     base["global"]["sla"] = max(0.0, min(100.0, ((h_tot - t_real) / h_tot) * 100)) if h_tot > 0 else 100.0
     uptime_hrs = h_tot - t_real
-    base["global"]["mtbf"] = float(uptime_hrs / len(df_ext)) if len(df_ext) > 0 else float(h_tot)
+    base["global"]["mtbf"] = float(uptime_hrs / len(df_valid_times)) if len(df_valid_times) > 0 else float(h_tot)
 
     return base
 
@@ -271,16 +266,17 @@ def generar_pdf(mes, anio, kpis, df):
     buffer = BytesIO(); doc = SimpleDocTemplate(buffer, pagesize=A4, leftMargin=2*cm, rightMargin=2*cm, topMargin=2*cm, bottomMargin=2*cm); story = []; now_str = datetime.now(SV_TZ).strftime('%d/%m/%Y %H:%M')
     story.append(Paragraph("MULTINET", s_title)); story.append(Paragraph("Reporte Ejecutivo · Network Operations Center", s_sub)); story.append(HRFlowable(width="100%", thickness=2, color=RL_ORANGE, spaceAfter=10)); story.append(Paragraph(f"<b>Periodo:</b> {mes} {anio}", s_period)); story.append(Paragraph(f"<b>Generado:</b> {now_str} (hora El Salvador)", s_body)); story.append(Spacer(1, 0.5*cm))
     
-    story.append(Paragraph("1. Indicadores Segmentados", s_sec))
+    story.append(Paragraph("1. Indicadores Segmentados por Calidad de Dato", s_sec))
     kpi_rows = [
         ['Indicador', 'Valor', 'Descripción'], 
-        ['SLA Global (Disponibilidad)', f"{kpis['global']['sla']:.2f}%", 'Basado en fallas con tiempo conocido'], 
-        ['MTBF (Tiempo entre Fallas)', f"{kpis['global']['mtbf']:.1f} hrs", 'Tiempo promedio sin fallas'],
-        ['Riesgo Financiero', f"${kpis['global']['loss_usd']:,.2f}", 'Pérdida por servicio no entregado'],
-        ['T1: MTTR (Datos Exactos)', f"{kpis['t1']['mttr']:.2f} hrs", 'Resolución incidentes completos'], 
-        ['T1: ACD', f"{kpis['t1']['acd']:.2f} hrs", 'Afectación por cliente'],
-        ['T2: Fallas (Sin Clientes)', f"{kpis['t2']['fallas']}", 'Eventos con tiempo pero sin impacto medible'],
-        ['T3: Fallas Incompletas', f"{kpis['t3']['fallas']}", 'Eventos sin registro de tiempos exactos']
+        ['SLA Global (Disponibilidad)', f"{kpis['global']['sla']:.2f}%", 'Operatividad calculada con datos exactos'], 
+        ['Impacto Acumulado', f"{kpis['global']['db']/24:.2f} días", 'Total de horas caídas (T1+T2) / 24'],
+        ['MTBF (Tiempo entre Fallas)', f"{kpis['global']['mtbf']:.1f} hrs", 'Tiempo promedio sin fallas medidas'],
+        ['Fallas P1 (Críticas)', f"{kpis['global']['p1']}", 'Incidentes críticos globales'],
+        ['T1: MTTR (Datos Exactos)', f"{kpis['t1']['mttr']:.2f} hrs", 'Resolución incidentes que afectaron clientes'], 
+        ['T1: ACD Real', f"{kpis['t1']['acd']:.2f} hrs", 'Afectación ponderada por cliente'],
+        ['T1: Clientes Afectados', f"{kpis['t1']['clientes']:,}", 'Volumen de usuarios impactados'],
+        ['T2/T3: Fallas Sin Impacto/Hora', f"{kpis['t2']['fallas'] + kpis['t3']['fallas']}", 'Eventos excluidos de métricas de cliente']
     ]
     kpi_t = Table(kpi_rows, colWidths=[5.5*cm, 3*cm, 8.5*cm]); kpi_t.setStyle(table_style(RL_BLUE)); story.append(kpi_t); story.append(Spacer(1, 0.4*cm))
     
@@ -360,7 +356,7 @@ if not st.session_state.logged_in:
 # SIDEBAR / PANEL LATERAL
 # =====================================================================
 with st.sidebar:
-    st.caption(f"Usuario: **{st.session_state.username}** | Producción v20.0")
+    st.caption(f"Usuario: **{st.session_state.username}** | NOC v20.0")
 
     anio_act = datetime.now(SV_TZ).year
     anios    = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
@@ -404,56 +400,59 @@ with tabs[0]:
     else:
         kpis = calc_kpis(df_m, a_sel, m_idx)
 
-        # BLOQUE 1: RESUMEN GLOBAL
-        st.markdown("### 🌐 Resumen Global del Mes")
-        c1, c2, c3, c4 = st.columns(4)
-        c1.metric("SLA Global", f"{kpis['global']['sla']:.2f}%", help="Calculado usando TODAS las fallas externas con Tiempos Exactos.")
-        c2.metric("Total Fallas Externas", kpis['global']['total_fallas'], help="Cantidad total de incidentes en la red externa, sin importar nivel de datos.")
-        c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} hrs", help="Tiempo medio entre fallas operativas.")
-        c4.metric("Riesgo Financiero", f"${kpis['global']['loss_usd']:,.2f}", help="Pérdida por servicio no entregado (Aplica solo a datos T1 exactos).")
+        # BLOQUE 1: RESUMEN GLOBAL (Salud General)
+        st.markdown("### 🌟 Resumen Global (La red en general)")
+        c1, c2, c3, c4, c5 = st.columns(5)
+        c1.metric("SLA Global", f"{kpis['global']['sla']:.2f}%", help="Disponibilidad basada en eventos medibles (T1 y T2). Solapamientos de horas en diferentes nodos no se restan doble.")
+        c2.metric("Total Eventos", kpis['global']['total_fallas'], help="Cantidad absoluta de fallas externas registradas.")
+        c3.metric("MTBF", f"{kpis['global']['mtbf']:.1f} hrs", help="Mean Time Between Failures: Tiempo promedio operativo entre fallas válidas.")
+        c4.metric("Impacto Acumulado", f"{kpis['global']['db']/24:.1f} días", help="Total de horas caídas válidas (T1 y T2) divididas entre 24 horas.")
+        c5.metric("Falla Mayor", f"{kpis['global']['mh']:.1f} hrs", help="Duración del evento más largo (Pico máximo).")
         
         st.divider()
 
         # BLOQUE 2: TIER 1 (Exactos)
-        st.markdown("### 🥇 Datos Exactos (Tiempos + Clientes completos)")
+        st.markdown("### 🥇 Tier 1 - Afectación a Clientes (Datos Exactos)")
         if kpis['t1']['fallas'] == 0:
-            st.info("No hay incidentes 100% exactos registrados en este periodo.")
+            st.info("No hay incidentes 100% exactos (con tiempo y clientes) en este periodo.")
         else:
             t1a, t1b, t1c, t1d = st.columns(4)
-            t1a.metric("Fallas Completas", kpis['t1']['fallas'])
-            t1b.metric("MTTR Real", f"{kpis['t1']['mttr']:.2f} hrs", help="Tiempo Promedio de Resolución exacto.")
-            t1c.metric("ACD Real", f"{kpis['t1']['acd']:.2f} hrs", help="Afectación Promedio por Cliente exacto.")
-            t1d.metric("Clientes Afectados", f"{kpis['t1']['clientes']:,}")
+            t1a.metric("Fallas Medidas", kpis['t1']['fallas'], help="Eventos que poseen tanto duración exacta como cantidad de clientes > 0.")
+            t1b.metric("MTTR Real", f"{kpis['t1']['mttr']:.2f} hrs", help="Mean Time To Repair: Promedio de tiempo de resolución solo para eventos con afectación a usuarios.")
+            t1c.metric("ACD Real", f"{kpis['t1']['acd']:.2f} hrs", help="Afectación Promedio por Cliente: Sensación de interrupción real experimentada por los usuarios.")
+            t1d.metric("Clientes Afectados", f"{kpis['t1']['clientes']:,}", help="Sumatoria de clientes impactados en estos eventos.")
         
         st.divider()
 
-        # BLOQUE 3: TIER 2 Y TIER 3
-        col_t2, col_t3 = st.columns(2)
+        # BLOQUE 3: TIER 2 Y TIER 3 Y P4 (Segmentos Aislados)
+        col_t2, col_t3, col_int = st.columns(3)
         with col_t2:
-            st.markdown("### 🥈 Fallas sin Clientes (Solo Tiempos)")
+            st.markdown("### 🥈 Tier 2 - Red (Sin Clientes)")
             if kpis['t2']['fallas'] == 0:
-                st.success("Sin registros en esta categoría.")
+                st.success("Sin registros.")
             else:
                 t2a, t2b = st.columns(2)
-                t2a.metric("Fallas Medidas", kpis['t2']['fallas'], help="Tienen hora exacta, pero clientes afectados está en 0.")
-                t2b.metric("MTTR (Sin impacto)", f"{kpis['t2']['mttr']:.2f} hrs", help="Promedio de resolución de fallas que no impactaron clientes masivos.")
+                t2a.metric("Fallas de Red", kpis['t2']['fallas'], help="Eventos con tiempo exacto pero registrados con 0 clientes afectados.")
+                t2b.metric("MTTR (Red)", f"{kpis['t2']['mttr']:.2f} hrs", help="Tiempo de resolución de este segmento aislado.")
                 
         with col_t3:
-            st.markdown("### 🥉 Fallas Incompletas (Sin Tiempos)")
+            st.markdown("### 🥉 Tier 3 - Incompletos")
             if kpis['t3']['fallas'] == 0:
-                st.success("Todos los registros del mes tienen tiempos.")
+                st.success("Sin registros.")
             else:
                 t3a, t3b = st.columns(2)
-                t3a.metric("Fallas Fantasmas", kpis['t3']['fallas'], help="Falta hora de inicio o cierre. Excluidas matemáticamente del SLA.")
-                t3b.metric("Clientes Estimados", f"{kpis['t3']['clientes_est']:,}", help="Cantidad de clientes que estuvieron afectados en estas fallas sin tiempo.")
+                t3a.metric("Fallas Sin Tiempo", kpis['t3']['fallas'], help="Falta hora de inicio o cierre. Se asumen duración 0. Excluidas matemáticamente del SLA.")
+                t3b.metric("Clientes (Est.)", f"{kpis['t3']['clientes_est']:,}", help="Posibles clientes afectados por estas fallas.")
+                
+        with col_int:
+            st.markdown("### 🔧 Internas / Infraestructura")
+            if kpis['int']['fallas'] == 0:
+                st.success("Sin registros.")
+            else:
+                t4a, t4b = st.columns(2)
+                t4a.metric("Eventos Internos", kpis['int']['fallas'], help="No afectan el SLA de los clientes finales.")
+                t4b.metric("MTTR Interno", f"{kpis['int']['mttr']:.2f} hrs", help="Tiempo de resolución interno.")
 
-        # INFO DE REGLAS Y MAPA
-        with st.expander("ℹ️ ¿Cómo se calculan estos indicadores segmentados?"):
-            st.markdown("""
-            * **SLA Global:** Utiliza únicamente incidentes donde se conoce la hora de inicio y de fin (T1 y T2). Solapamientos de horas en diferentes nodos se cruzan para no penalizar el SLA dos veces en el mismo horario.
-            * **MTTR Real:** Promedio de tiempo de reparación solo de incidentes que afectaron clientes comprobables.
-            * **ACD:** Duración de falla ponderada por el volumen real de clientes afectados.
-            """)
         st.divider()
 
         st.markdown("### 🗺️ Análisis Geoespacial y Causas Principales")
@@ -488,7 +487,7 @@ with tabs[0]:
 
         dg = df_m[df_m['conocimiento_tiempos'] == 'Total'].copy()
         if not dg.empty:
-            fg = px.timeline(dg, x_start="inicio_incidente", x_end="fin_incidente", y="zona_completa", color="Severidad", color_discrete_sequence=PALETA_CORP, title="Gantt de Fallas Simultáneas")
+            fg = px.timeline(dg, x_start="inicio_incidente", x_end="fin_incidente", y="zona_completa", color="Severidad", color_discrete_sequence=PALETA_CORP, title="Gantt de Fallas Simultáneas (T1 y T2)")
             fg.update_yaxes(autorange="reversed"); fg.update_traces(marker_line_width=1, marker_line_color="rgba(255,255,255,0.5)")
             fg.update_layout(margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)"); st.plotly_chart(fg, use_container_width=True)
 
@@ -499,18 +498,19 @@ with tabs[1]:
     st.title("🧠 Analítica Inteligente")
     if df_m.empty: st.info("Insuficientes datos para analítica.")
     else:
-        st.markdown("#### 📈 Panel de Confianza y Estabilidad")
+        st.markdown("#### 📈 Panel de Confianza de Datos")
         tot_regs = len(df_m)
         c_completos = df_m[df_m['conocimiento_tiempos'] == 'Total'].shape[0]
         score = int((c_completos / tot_regs) * 100) if tot_regs > 0 else 0
         
-        kpis_analitica = calc_kpis(df_m, a_sel, m_idx)
-        
         c_q1, c_q2, c_q3, c_q4 = st.columns(4)
-        c_q1.metric("Score de Tiempos", f"{score}%", help="Porcentaje de registros con tiempos de inicio y fin completos.")
+        c_q1.metric("Score de Tiempos", f"{score}%", help="Porcentaje de registros que cuentan con tiempos de inicio y fin exactos.")
         c_q2.metric("Registros Íntegros", f"{c_completos} / {tot_regs}")
-        c_q3.metric("Fallas P1 Detectadas", f"{kpis_analitica['p1_count']}")
-        c_q4.metric("Fallas Internas", f"{kpis_analitica['int']['fallas']}")
+        c_q3.metric("Fallas P1 Detectadas", f"{len(df_m[df_m['Severidad'] == '🔴 P1 (Crítica)'])}")
+        
+        # Conteo de faltas de clientes (Tier 2) para el área de analítica
+        c_sin_clientes = len(df_m[(df_m['conocimiento_tiempos'] == 'Total') & (df_m['clientes_afectados'] == 0) & (df_m['categoria'] != CAT_INTERNA)])
+        c_q4.metric("Faltas de Dato Cliente", f"{c_sin_clientes}", help="Registros que sí tienen tiempo pero el técnico olvidó/omitió poner clientes.")
 
         st.divider()
         c_cor1, c_cor2 = st.columns(2)
@@ -546,10 +546,14 @@ with tabs[1]:
             fig_heat.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
             st.plotly_chart(fig_heat, use_container_width=True)
         with c_cor4:
-            st.markdown("#### Dispersión: Duración vs. Clientes")
-            fig_scat = px.scatter(df_m, x='duracion_horas', y='clientes_afectados', color='Severidad', size='duracion_horas', hover_data=['zona_completa', 'causa_raiz'], color_discrete_sequence=PALETA_CORP)
-            fig_scat.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
-            st.plotly_chart(fig_scat, use_container_width=True)
+            st.markdown("#### Dispersión: Duración vs. Clientes (Solo T1)")
+            df_t1_disp = df_m[(df_m['conocimiento_tiempos'] == 'Total') & (df_m['clientes_afectados'] > 0)]
+            if not df_t1_disp.empty:
+                fig_scat = px.scatter(df_t1_disp, x='duracion_horas', y='clientes_afectados', color='Severidad', size='duracion_horas', hover_data=['zona_completa', 'causa_raiz'], color_discrete_sequence=PALETA_CORP)
+                fig_scat.update_layout(margin=dict(l=0,r=0,t=0,b=0), paper_bgcolor="rgba(0,0,0,0)")
+                st.plotly_chart(fig_scat, use_container_width=True)
+            else:
+                st.info("Sin datos T1 para graficar dispersión.")
 
 # ─────────────────────────────────────────────
 # TABS DE ADMINISTRADOR (3, 4, 5)
@@ -604,7 +608,12 @@ if st.session_state.role == 'admin':
                     if not cmdb_df.empty:
                         m = cmdb_df[(cmdb_df['zona'] == z) & (cmdb_df['subzona'] == sz) & (cmdb_df['equipo'] == eq)]
                         if not m.empty: d_cl = int(m['clientes'].iloc[0])
+                    
+                    # Tooltip cambia si es corporativo/interno para guiar al técnico
                     cl_f = st.number_input("👤 Clientes Afectados (Deje 0 si no lo sabe)", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
+                    
+                    if cat == "Cliente Corporativo": st.caption("🏢 Segmento Corp: Por defecto se recomienda 1 enlace.")
+                    elif cat == CAT_INTERNA: st.caption("🔧 Falla Interna: Clientes en 0 por defecto.")
                 
                 cr = cf2.selectbox("🛠️ Causa Raíz", CAUSAS_RAIZ, key=f"cr_{fk}")
                 desc = st.text_area("📝 Descripción del Evento", key=f"desc_{fk}")
@@ -628,7 +637,7 @@ if st.session_state.role == 'admin':
                                     conn.execute(text("INSERT INTO inventario_nodos (zona, subzona, equipo, clientes) VALUES (:z, :sz, :e, :cl) ON CONFLICT (zona, subzona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes"), {"z": z, "sz": sz, "e": eq, "cl": cl_f})
                                 
                                 log_audit("INSERT", f"Falla en {z}"); load_data_mes.clear(); st.session_state.form_reset += 1; st.rerun()
-                            except Exception as e: st.toast(f"Error: {e}")
+                            except Exception as e: st.toast(f"Error: {e}", icon="❌")
 
         with ccx:
             st.markdown("#### 🕒 Recientes")
@@ -652,7 +661,7 @@ if st.session_state.role == 'admin':
             tot_p = max(1, math.ceil(len(df_d)/15)); pg = c_pg.number_input("Página", 1, tot_p, 1, key="p_bd")
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy(); df_page.insert(0, "Sel", False)
 
-            drop_cols = [c for c in ['deleted_at', 'Severidad', 'Recomendacion_Auto', 'zona_completa', 'tiene_inicio', 'tiene_fin', 'data_quality_flag', 'Día', 'Hora'] if c in df_page.columns]
+            drop_cols = [c for c in ['deleted_at', 'Severidad', 'zona_completa', 'data_quality_flag', 'Día', 'Hora'] if c in df_page.columns]
             
             ed_df = st.data_editor(df_page.drop(columns=drop_cols, errors='ignore'), column_config={"Sel": st.column_config.CheckboxColumn("✔", default=False), "id": None, "inicio_incidente": st.column_config.DatetimeColumn("Inicio", format="YYYY-MM-DD HH:mm"), "fin_incidente": st.column_config.DatetimeColumn("Fin", format="YYYY-MM-DD HH:mm")}, use_container_width=True, hide_index=True)
 
