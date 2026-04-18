@@ -4,7 +4,7 @@ import plotly.express as px
 import plotly.graph_objects as go
 import time, bcrypt, math, pytz, calendar, json
 from sqlalchemy import create_engine, text
-from datetime import datetime, timedelta, time as datetime_time
+from datetime import datetime, timedelta
 from io import BytesIO
 from reportlab.lib.pagesizes import A4
 from reportlab.lib import colors as rl_colors
@@ -52,8 +52,15 @@ st.markdown("""
     button[data-baseweb="tab"][aria-selected="true"] { background-color: #f15c22 !important; border-color: #f15c22 !important; }
     button[data-baseweb="tab"] p { font-size: 20px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0 !important; }
     button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
+    .st-emotion-cache-1wivap2 { padding-top: 1.5rem; }
     </style>
 """, unsafe_allow_html=True)
+
+# =====================================================================
+# GESTIÓN DE ESTADO (Para refrescar formularios automáticamente)
+# =====================================================================
+if 'form_reset' not in st.session_state:
+    st.session_state.form_reset = 0
 
 # =====================================================================
 # BASE DE DATOS E INICIALIZACIÓN
@@ -70,7 +77,6 @@ def init_db():
         conn.execute(text("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE, password_hash VARCHAR(255), role VARCHAR(20), pregunta VARCHAR(255), respuesta VARCHAR(255), failed_attempts INT DEFAULT 0, locked_until TIMESTAMP, is_banned BOOLEAN DEFAULT FALSE);"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, timestamp TIMESTAMP, username VARCHAR(50), action VARCHAR(50), details TEXT);"))
         
-        # Hard Reset si la estructura vieja existe
         try:
             check = conn.execute(text("SELECT column_name FROM information_schema.columns WHERE table_name='incidents' AND column_name='subzona'")).fetchall()
             if len(check) == 0:
@@ -94,12 +100,9 @@ def init_db():
                 causa_raiz VARCHAR(150),
                 descripcion TEXT,
                 duracion_horas FLOAT,
-                conocimiento_tiempos VARCHAR(50),
                 deleted_at TIMESTAMPTZ DEFAULT NULL
             )
         """))
-        # Asegurar columna en caso de migraciones pasadas
-        conn.execute(text("ALTER TABLE incidents ADD COLUMN IF NOT EXISTS conocimiento_tiempos VARCHAR(50) DEFAULT 'Total';"))
         
         conn.execute(text("CREATE TABLE IF NOT EXISTS incidents_history (id SERIAL PRIMARY KEY, incident_id INT, changed_by VARCHAR(50), changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, old_data TEXT, new_data TEXT)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS inventario_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(100), subzona VARCHAR(150), equipo VARCHAR(100), clientes INT DEFAULT 0, UNIQUE(zona, subzona, equipo));"))
@@ -152,7 +155,9 @@ def enriquecer_y_normalizar(df):
     df['clientes_afectados'] = pd.to_numeric(df['clientes_afectados'], errors='coerce').fillna(0).astype(int)
     
     df.loc[df['clientes_afectados'] == 0, 'categoria'] = CAT_INTERNA
-    df['data_quality_flag'] = (df['conocimiento_tiempos'] == 'Total')
+    
+    # Flag: Si la duración es exactamente 0.0, asumimos que no se proporcionó hora de inicio o fin
+    df['data_quality_flag'] = (df['duracion_horas'] > 0.0)
     
     def eval_severidad(r):
         if r['categoria'] == CAT_INTERNA: return '🟢 P4 (Interna)'
@@ -165,14 +170,24 @@ def enriquecer_y_normalizar(df):
     return df
 
 def calc_kpis(df, anio, m_idx):
-    base = {"db": 0.0, "acd": 0.0, "sla": 100.0, "mttr_ext": 0.0, "mttr_int": 0.0, "cl": 0, "mh": 0.0, "n_internas": 0, "p1_count": 0, "has_incomplete": False}
+    base = {
+        "db": 0.0, "acd": 0.0, "sla": 100.0, "mttr_ext": 0.0, "mttr_int": 0.0, 
+        "cl": 0, "mh": 0.0, "n_internas": 0, "p1_count": 0, "has_incomplete": False,
+        "inc_count": 0, "inc_clientes": 0, "inc_zona_top": "N/A"
+    }
     if df.empty: return base
     
     h_tot = calendar.monthrange(anio, m_idx)[1] * 24
     m_start = SV_TZ.localize(datetime(anio, m_idx, 1, 0, 0, 0))
     m_end = SV_TZ.localize(datetime(anio, m_idx, calendar.monthrange(anio, m_idx)[1], 23, 59, 59))
 
-    base["has_incomplete"] = not df['data_quality_flag'].all()
+    # Identificar las que NO tienen tiempo exacto
+    df_incompletos = df[df['data_quality_flag'] == False]
+    base["has_incomplete"] = not df_incompletos.empty
+    base["inc_count"] = len(df_incompletos)
+    base["inc_clientes"] = int(df_incompletos['clientes_afectados'].sum())
+    if not df_incompletos.empty:
+        base["inc_zona_top"] = df_incompletos['zona_completa'].mode()[0]
 
     df_int = df[df['categoria'] == CAT_INTERNA]; df_ext = df[df['categoria'] != CAT_INTERNA]
     base["n_internas"] = len(df_int)
@@ -188,6 +203,7 @@ def calc_kpis(df, anio, m_idx):
     m_acd = (df_ext['duracion_horas'] > 0) & (df_ext['clientes_afectados'] > 0)
     if m_acd.any(): base["acd"] = float((df_ext.loc[m_acd, 'duracion_horas'] * df_ext.loc[m_acd, 'clientes_afectados']).sum() / df_ext.loc[m_acd, 'clientes_afectados'].sum())
 
+    # SLA con recortes para registros COMPLETOS
     v_kpi = df_ext[df_ext['data_quality_flag'] == True].copy()
     t_real = 0.0
     if not v_kpi.empty:
@@ -311,7 +327,7 @@ if not st.session_state.logged_in:
 # SIDEBAR / PANEL LATERAL
 # =====================================================================
 with st.sidebar:
-    st.caption(f"Usuario: **{st.session_state.username}** | Producción v18.0")
+    st.caption(f"Usuario: **{st.session_state.username}** | Producción v18.1")
 
     anio_act = datetime.now(SV_TZ).year
     anios    = sorted(list(set([anio_act+1, anio_act, anio_act-1, anio_act-2])), reverse=True)
@@ -365,9 +381,6 @@ with tabs[0]:
         k6.metric("Impacto Acumulado", "0.0 días", help="Total de horas de caída externa divididas entre 24.")
         st.divider()
     else:
-        if not df_m['data_quality_flag'].all():
-            st.warning(f"⚠️ **Aviso:** Algunos registros tienen tiempos incompletos (Duración 0). El SLA exacto se calcula solo con los registros completos.")
-            
         kpis = calc_kpis(df_m, a_sel, m_idx)
 
         df_p = pd.DataFrame(); kpis_p = None; dm = da = ds = dd = None
@@ -398,9 +411,20 @@ with tabs[0]:
             ki.metric(f"MTTR · Internas ({kpis['n_internas']} ev)", f"{kpis['mttr_int']:.2f} hrs", help="Tiempo promedio de resolución de fallas internas. No impacta SLA.")
             kp.metric(f"Eventos P1 (Críticos)", f"{kpis['p1_count']} alertas", delta_color="inverse", help="Incidentes > 12h o > 1000 clientes.")
 
+        # =================================================================
+        # NUEVO BLOQUE: MÉTRICAS DE FALLAS SIN TIEMPO EXACTO
+        # =================================================================
+        if kpis['has_incomplete']:
+            st.markdown("### ⚠️ Impacto de Fallas sin Tiempo Exacto")
+            st.caption("Los siguientes incidentes fueron reportados sin hora de inicio o cierre. Se asume duración 0.0 hrs y están excluidos del cálculo del SLA y MTTR.")
+            _, c_inc1, c_inc2, c_inc3, _ = st.columns([0.5, 2, 2, 2, 0.5])
+            c_inc1.metric("Fallas No Medidas", f"{kpis['inc_count']} eventos", help="Cantidad de incidentes registrados sin tiempos exactos.")
+            c_inc2.metric("Clientes Afectados", f"{kpis['inc_clientes']:,}", help="Suma de clientes en fallas no medidas.")
+            c_inc3.metric("Principal Zona Afectada", kpis['inc_zona_top'], help="Zona con más fallas sin tiempos exactos.")
+
         with st.expander("ℹ️ ¿Cómo se calculan estos indicadores?"):
             st.markdown("""
-            * **SLA:** Total de horas del mes menos horas reales de caída. Si una falla cruza entre meses, el tiempo se divide matemáticamente. Fallas simultáneas se fusionan. Excluye internas.
+            * **SLA:** Total de horas del mes menos horas reales de caída. Si una falla cruza entre meses, el tiempo se divide matemáticamente. Fallas simultáneas se fusionan. Excluye internas y registros sin hora.
             * **MTTR:** (Suma de duración) / (Cantidad de fallas).
             * **ACD:** (Duración x Clientes) / Total Clientes. Impacto real sentido por los usuarios.
             """)
@@ -482,6 +506,7 @@ if st.session_state.role == 'admin':
     # ── TAB 3: INGRESO OPERATIVO ──
     with tabs[2]:
         st.title("📝 Ingreso Operativo")
+        fk = st.session_state.form_reset  # Key dinámica para forzar el reset del formulario
         
         try: cmdb_df = pd.read_sql("SELECT zona, subzona, equipo, clientes FROM inventario_nodos", engine)
         except: cmdb_df = pd.DataFrame(columns=['zona', 'subzona', 'equipo', 'clientes'])
@@ -491,33 +516,33 @@ if st.session_state.role == 'admin':
             with st.container(border=True):
                 c_z1, c_z2 = st.columns(2)
                 with c_z1:
-                    z = st.selectbox("📍 Nodo Principal", ZONAS_SV)
+                    z = st.selectbox("📍 Nodo Principal", ZONAS_SV, key=f"z_{fk}")
                 with c_z2:
                     st.markdown("<div style='margin-top: 32px;'></div>", unsafe_allow_html=True)
-                    afect_gen = st.toggle("🚨 Falla General (Afecta todo el nodo)", value=True)
+                    afect_gen = st.toggle("🚨 Falla General (Afecta todo el nodo)", value=True, key=f"ag_{fk}")
                 
                 if not afect_gen:
-                    sz = st.text_input("📍 Especifique Sub-zona (Ej. San Antonio Masahuat)")
+                    sz = st.text_input("📍 Especifique Sub-zona (Ej. San Antonio Masahuat)", key=f"sz_{fk}")
                 else:
                     sz = "General"
                     
                 st.divider()
                 c1, c2 = st.columns(2)
-                srv = c1.selectbox("🌐 Servicio", SERVICIOS)
-                cat = c2.selectbox("🏢 Segmento", CATEGORIAS)
-                eq  = st.selectbox("🖥️ Equipo", EQUIPOS_SV)
+                srv = c1.selectbox("🌐 Servicio", SERVICIOS, key=f"s_{fk}")
+                cat = c2.selectbox("🏢 Segmento", CATEGORIAS, key=f"c_{fk}")
+                eq  = st.selectbox("🖥️ Equipo", EQUIPOS_SV, key=f"e_{fk}")
                 st.divider()
 
                 ct1, ct2 = st.columns(2)
                 with ct1:
-                    fi = st.date_input("📅 Fecha de Inicio")
-                    hi_on = st.toggle("🕒 Asignar Hora de Inicio", value=False)
-                    if hi_on: hi_val = st.time_input("Hora de Apertura")
+                    fi = st.date_input("📅 Fecha de Inicio", key=f"fi_{fk}")
+                    hi_on = st.toggle("🕒 Asignar Hora de Inicio", value=False, key=f"hi_on_{fk}")
+                    if hi_on: hi_val = st.time_input("Hora de Apertura", key=f"hi_val_{fk}")
                     else: hi_val = None; st.info("ℹ️ Al no asignar hora de inicio, no se calculará duración.")
                 with ct2:
-                    ff = st.date_input("📅 Fecha de Cierre")
-                    hf_on = st.toggle("🕒 Asignar Hora de Cierre", value=False)
-                    if hf_on: hf_val = st.time_input("Hora de Cierre")
+                    ff = st.date_input("📅 Fecha de Cierre", key=f"ff_{fk}")
+                    hf_on = st.toggle("🕒 Asignar Hora de Cierre", value=False, key=f"hf_on_{fk}")
+                    if hf_on: hf_val = st.time_input("Hora de Cierre", key=f"hf_val_{fk}")
                     else: hf_val = None; st.info("ℹ️ Al no asignar hora de cierre, no se calculará duración.")
 
                 # Calculo de duración solo si ambos tiempos exactos son provistos
@@ -533,35 +558,36 @@ if st.session_state.role == 'admin':
                         if not cmdb_df.empty:
                             match = cmdb_df[(cmdb_df['zona'] == z) & (cmdb_df['subzona'] == sz) & (cmdb_df['equipo'] == eq)]
                             if not match.empty: default_cl = int(match['clientes'].iloc[0])
-                        cl_f = st.number_input("👤 Clientes Afectados", min_value=0, value=default_cl, step=1)
-                cr   = cf2.selectbox("🛠️ Causa Raíz", CAUSAS_RAIZ)
-                desc = st.text_area("📝 Descripción del Evento")
+                        cl_f = st.number_input("👤 Clientes Afectados", min_value=0, value=default_cl, step=1, key=f"cl_{fk}")
+                cr   = cf2.selectbox("🛠️ Causa Raíz", CAUSAS_RAIZ, key=f"cr_{fk}")
+                desc = st.text_area("📝 Descripción del Evento", key=f"desc_{fk}")
 
                 if st.button("💾 Guardar Registro", type="primary"):
-                    # Validación lógica básica (solo si ambas horas están)
                     if (hi_on and hf_on) and (fi > ff or (fi == ff and hi_val > hf_val)):
                         st.toast("❌ Error lógico: el cierre es anterior al inicio.", icon="🚨")
                     else:
                         with st.spinner("Guardando..."):
                             try:
-                                # Default to 00:00:00 just to save the date if time is unknown
+                                # Si no hay hora, guardamos 00:00 para al menos retener la fecha
                                 hi_db = hi_val if hi_on else datetime_time(0, 0)
                                 hf_db = hf_val if hf_on else datetime_time(0, 0)
                                 
                                 inicio_dt = SV_TZ.localize(datetime.combine(fi, hi_db))
                                 fin_dt = SV_TZ.localize(datetime.combine(ff, hf_db))
                                 
-                                conocimiento = "Total" if (hi_on and hf_on) else "Parcial"
-                                
                                 with engine.begin() as conn:
                                     conn.execute(text("""
-                                        INSERT INTO incidents (zona, subzona, afectacion_general, servicio, categoria, equipo_afectado, inicio_incidente, fin_incidente, clientes_afectados, causa_raiz, descripcion, duracion_horas, conocimiento_tiempos)
-                                        VALUES (:z, :sz, :ag, :s, :c, :e, :idi, :idf, :cl, :cr, :d, :dur, :con)
-                                    """), {"z": z, "sz": sz, "ag": afect_gen, "s": srv, "c": cat, "e": eq, "idi": inicio_dt, "idf": fin_dt, "cl": cl_f, "cr": cr, "d": desc, "dur": dur, "con": conocimiento})
+                                        INSERT INTO incidents (zona, subzona, afectacion_general, servicio, categoria, equipo_afectado, inicio_incidente, fin_incidente, clientes_afectados, causa_raiz, descripcion, duracion_horas)
+                                        VALUES (:z, :sz, :ag, :s, :c, :e, :idi, :idf, :cl, :cr, :d, :dur)
+                                    """), {"z": z, "sz": sz, "ag": afect_gen, "s": srv, "c": cat, "e": eq, "idi": inicio_dt, "idf": fin_dt, "cl": cl_f, "cr": cr, "d": desc, "dur": dur})
                                     
                                     conn.execute(text("INSERT INTO inventario_nodos (zona, subzona, equipo, clientes) VALUES (:z, :sz, :e, :cl) ON CONFLICT (zona, subzona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes"), {"z": z, "sz": sz, "e": eq, "cl": cl_f})
                                 
-                                log_audit("INSERT", f"Falla en {z} - {sz} [{cat}]"); load_data_mes.clear(); st.toast("✅ Registro guardado exitosamente.", icon="🎉"); time.sleep(1); st.rerun()
+                                log_audit("INSERT", f"Falla en {z} - {sz} [{cat}]")
+                                load_data_mes.clear()
+                                st.session_state.form_reset += 1 # Fuerza el reseteo de todas las casillas
+                                st.toast("✅ Registro guardado exitosamente.", icon="🎉")
+                                time.sleep(1); st.rerun()
                             except Exception as e: st.toast(f"Error al guardar: {e}", icon="❌")
 
         with ccx:
@@ -629,8 +655,8 @@ if st.session_state.role == 'admin':
                         o = ref_df.iloc[i]
                         if not o.equals(r.drop('Sel')):
                             log_version(int(r['id']), o.to_json(default_handler=str), r.drop('Sel').to_json(default_handler=str))
-                            dur = max(0, round((pd.to_datetime(r.get('fin_incidente')) - pd.to_datetime(r.get('inicio_incidente'))).total_seconds() / 3600, 2)) if (r.get('conocimiento_tiempos') == 'Total' and pd.notna(r.get('fin_incidente'))) else 0
-                            conn.execute(text("UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id"), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "idi": r.get('inicio_incidente', None), "idf": r.get('fin_incidente', None), "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur, "con": r.get('conocimiento_tiempos','Total'), "id": int(r['id'])})
+                            dur = max(0, round((pd.to_datetime(r.get('fin_incidente')) - pd.to_datetime(r.get('inicio_incidente'))).total_seconds() / 3600, 2)) if r.get('duracion_horas') > 0 else 0
+                            conn.execute(text("UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur WHERE id=:id"), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "idi": r.get('inicio_incidente', None), "idf": r.get('fin_incidente', None), "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur, "id": int(r['id'])})
                 log_audit("UPDATE", "Registros editados."); load_data_mes.clear(); st.toast("Cambios guardados.", icon="✅"); time.sleep(1); st.rerun()
 
             st.divider()
