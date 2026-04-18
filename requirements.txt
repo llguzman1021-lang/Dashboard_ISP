@@ -1,9 +1,1 @@
-streamlit
-pandas
-plotly
-SQLAlchemy
-psycopg2-binary
-pytz
-bcrypt
-reportlab
-requests
+
