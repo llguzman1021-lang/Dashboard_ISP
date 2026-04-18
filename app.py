@@ -15,10 +15,9 @@ from reportlab.lib.units import cm
 # =====================================================================
 # CONFIGURACIÓN GLOBAL Y CONSTANTES CORPORATIVAS
 # =====================================================================
-st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="🌐")
+st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="📊")
 SV_TZ = pytz.timezone('America/El_Salvador')
 
-# Restauradas las variables de colores para el PDF y Gráficos
 COLOR_PRIMARY   = '#f15c22'
 COLOR_SECONDARY = '#1d2c59'
 COLOR_TEAL      = '#29b09d'
@@ -61,12 +60,11 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-if 'form_reset' not in st.session_state: st.session_state.form_reset = 0
-for _k, _v in [('logged_in', False), ('role', ''), ('username', ''), ('log_u', ''), ('log_p', ''), ('log_err', ''), ('log_msg', '')]:
+for _k, _v in [('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''), ('log_u', ''), ('log_p', ''), ('log_err', ''), ('log_msg', '')]:
     if _k not in st.session_state: st.session_state[_k] = _v
 
 # =====================================================================
-# BASE DE DATOS Y CACHÉ DE RENDIMIENTO
+# BASE DE DATOS Y NUEVA ARQUITECTURA RELACIONAL
 # =====================================================================
 @st.cache_resource
 def get_engine(): return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
@@ -77,22 +75,30 @@ def check_pw(p: str, h: str) -> bool: return bcrypt.checkpw(p.encode(), h.encode
 
 def init_db():
     with engine.begin() as conn:
-        conn.execute(text("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE, password_hash VARCHAR(255), role VARCHAR(20), pregunta VARCHAR(255), respuesta VARCHAR(255), failed_attempts INT DEFAULT 0, locked_until TIMESTAMP, is_banned BOOLEAN DEFAULT FALSE)"))
+        # Tabla de usuarios SIN recuperación de contraseña
+        conn.execute(text("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE, password_hash VARCHAR(255), role VARCHAR(20), failed_attempts INT DEFAULT 0, locked_until TIMESTAMP, is_banned BOOLEAN DEFAULT FALSE)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, timestamp TIMESTAMP, username VARCHAR(50), action VARCHAR(50), details TEXT)"))
+        
+        # Catálogos
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_zonas (id SERIAL PRIMARY KEY, nombre VARCHAR(150) UNIQUE NOT NULL, lat FLOAT DEFAULT 13.6929, lon FLOAT DEFAULT -89.2182)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_equipos (id SERIAL PRIMARY KEY, nombre VARCHAR(100) UNIQUE NOT NULL)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_causas  (id SERIAL PRIMARY KEY, nombre VARCHAR(150) UNIQUE NOT NULL, es_externa BOOLEAN DEFAULT FALSE)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_servicios (id SERIAL PRIMARY KEY, nombre VARCHAR(100) UNIQUE NOT NULL)"))
+        
+        # Nueva CMDB centralizada
+        conn.execute(text("CREATE TABLE IF NOT EXISTS cmdb_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(150), equipo VARCHAR(100), clientes INT DEFAULT 0, fuente VARCHAR(50) DEFAULT 'Manual', ultima_sincronizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(zona, equipo))"))
+        
+        # Tabla de incidentes mejorada (Con impact_percentage)
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS incidents (
                 id SERIAL PRIMARY KEY, zona VARCHAR(150) NOT NULL, subzona VARCHAR(150), afectacion_general BOOLEAN DEFAULT TRUE,
                 servicio VARCHAR(100), categoria VARCHAR(100), equipo_afectado VARCHAR(100), inicio_incidente TIMESTAMPTZ NOT NULL,
-                fin_incidente TIMESTAMPTZ NOT NULL, clientes_afectados INT DEFAULT 0, causa_raiz VARCHAR(150), descripcion TEXT,
-                duracion_horas FLOAT, conocimiento_tiempos VARCHAR(50) DEFAULT 'Total', deleted_at TIMESTAMPTZ DEFAULT NULL
+                fin_incidente TIMESTAMPTZ NOT NULL, clientes_afectados INT DEFAULT 0, impacto_porcentaje FLOAT DEFAULT 0.0, 
+                causa_raiz VARCHAR(150), descripcion TEXT, duracion_horas FLOAT, conocimiento_tiempos VARCHAR(50) DEFAULT 'Total', 
+                deleted_at TIMESTAMPTZ DEFAULT NULL
             )"""))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS incidents_history (id SERIAL PRIMARY KEY, incident_id INT, changed_by VARCHAR(50), changed_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP, old_data TEXT, new_data TEXT)"))
-        conn.execute(text("CREATE TABLE IF NOT EXISTS inventario_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(150), subzona VARCHAR(150), equipo VARCHAR(100), clientes INT DEFAULT 0, UNIQUE(zona, subzona, equipo))"))
 
+        # Inserción de catálogos por defecto si están vacíos
         if conn.execute(text("SELECT count(*) FROM cat_zonas")).scalar() == 0:
             for n, la, lo in DEFAULT_ZONAS: conn.execute(text("INSERT INTO cat_zonas (nombre,lat,lon) VALUES (:n,:lat,:lon) ON CONFLICT DO NOTHING"), {"n": n, "lat": la, "lon": lo})
         if conn.execute(text("SELECT count(*) FROM cat_equipos")).scalar() == 0:
@@ -102,13 +108,13 @@ def init_db():
         if conn.execute(text("SELECT count(*) FROM cat_servicios")).scalar() == 0:
             for s in DEFAULT_SERVICIOS: conn.execute(text("INSERT INTO cat_servicios (nombre) VALUES (:n) ON CONFLICT DO NOTHING"), {"n": s})
         
+        # Crear Admin raíz (Sin pregunta de seguridad)
         if conn.execute(text("SELECT count(*) FROM users WHERE username='Admin'")).scalar() == 0:
-            conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES ('Admin',:h,'admin','¿Color favorito?','azul')"), {"h": hash_pw("Areakde5")})
+            conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES ('Admin',:h,'admin')"), {"h": hash_pw("Areakde5")})
 
 try: init_db()
 except Exception as _e: st.error(f"Error DB Inicialización: {_e}")
 
-# Funciones Cacheadas para evitar LAG en los formularios
 @st.cache_data(ttl=300, show_spinner=False)
 def get_zonas() -> list[tuple]:
     try:
@@ -127,89 +133,70 @@ def get_causas_con_flag() -> dict:
         with engine.connect() as c: return {r[0]: r[1] for r in c.execute(text("SELECT nombre, es_externa FROM cat_causas ORDER BY nombre")).fetchall()}
     except: return {}
 
-@st.cache_data(ttl=60, show_spinner=False)
-def load_cmdb() -> pd.DataFrame:
-    try:
-        with engine.connect() as conn: return pd.read_sql("SELECT zona, subzona, equipo, clientes FROM inventario_nodos", conn)
-    except: return pd.DataFrame(columns=['zona', 'subzona', 'equipo', 'clientes'])
-
 def clear_catalog_cache():
-    get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear(); load_cmdb.clear()
+    get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear(); fetch_and_sync_smartolt.clear()
 
 # =====================================================================
-# CONEXIÓN SMARTOLT (Nuevos Endpoints Seguros)
+# MOTOR DE SINCRONIZACIÓN SMARTOLT -> NEON
 # =====================================================================
-# =====================================================================
-# CONEXIÓN SMARTOLT 
-# =====================================================================
-@st.cache_data(ttl=3600, show_spinner=False)
-def fetch_smartolt_clients() -> dict:
+@st.cache_data(ttl=3600, show_spinner=False) # Se ejecuta solo 1 vez por hora
+def fetch_and_sync_smartolt() -> dict:
+    """Descarga datos de SmartOLT y hace Upsert en la tabla cmdb_nodos de Neon"""
     try:
         base_url = st.secrets.get("smartolt_api_url", "").rstrip("/")
         api_key  = st.secrets.get("smartolt_api_key", "")
-        
         if not base_url or not api_key: return {"_error": "Faltan credenciales en st.secrets."}
 
         headers = {"X-Token": api_key}
+        res = requests.get(f"{base_url}/api/onu/get_all_onus_details", headers=headers, timeout=15)
         
-        # Endpoint para sacar la lista de ONUs
-        url = f"{base_url}/api/onu/get_all_onus_details"
-        res = requests.get(url, headers=headers, timeout=15)
+        if res.status_code != 200: return {"_error": f"Error HTTP {res.status_code}."}
+        data = res.json()
         
-        if res.status_code != 200:
-            return {"_error": f"Error HTTP {res.status_code}: SmartOLT denegó la conexión."}
-            
-        try:
-            data = res.json()
-        except ValueError:
-            return {"_error": "La API no devolvió datos JSON válidos."}
-            
-        # --- CAZADOR DE JSON ---
+        # Cazador de JSON
         onus_list = []
-        if isinstance(data, list):
-            onus_list = data
+        if isinstance(data, list): onus_list = data
         elif isinstance(data, dict):
-            # Buscamos en los nombres más comunes que usa SmartOLT
-            for key in ["response", "onus", "data", "onus_status", "msg"]:
+            for key in ["response", "onus", "data", "onus_status"]:
                 if key in data and isinstance(data[key], list):
-                    onus_list = data[key]
-                    break
-                    
-        # Si la lista sigue vacía, devolvemos las llaves para ver qué nos mandó SmartOLT
-        if not onus_list:
-            if isinstance(data, dict):
-                llaves = list(data.keys())
-                # Si SmartOLT mandó un mensaje de error interno (ej. status: false)
-                if "status" in data and data["status"] is False:
-                    return {"_error": f"SmartOLT dice: {data.get('error', 'Acceso denegado o endpoint incorrecto.')}"}
-                return {"_error": f"No se encontraron ONUs. SmartOLT respondió con estas llaves: {llaves}"}
-            else:
-                return {"_error": "SmartOLT respondió vacío."}
+                    onus_list = data[key]; break
+
+        if not onus_list: return {"_error": "No se encontraron ONUs activas o la API respondió vacío."}
             
         resultado = {}
         for onu in onus_list:
             if isinstance(onu, dict):
-                olt_name = str(onu.get("olt_name", onu.get("olt", "OLT Desconocida"))).strip()
+                olt_name = str(onu.get("olt_name", onu.get("olt", "OLT_Desconocida"))).strip()
                 resultado[olt_name] = resultado.get(olt_name, 0) + 1
+        
+        # Sincronizar con NEON
+        with engine.begin() as conn:
+            for olt_name, total in resultado.items():
+                conn.execute(text("""
+                    INSERT INTO cmdb_nodos (zona, equipo, clientes, fuente, ultima_sincronizacion) 
+                    VALUES (:z, 'OLT', :c, 'SmartOLT', CURRENT_TIMESTAMP)
+                    ON CONFLICT (zona, equipo) DO UPDATE 
+                    SET clientes = EXCLUDED.clientes, fuente = 'SmartOLT', ultima_sincronizacion = CURRENT_TIMESTAMP
+                """), {"z": olt_name, "c": total})
                 
         return resultado
     except Exception as ex: return {"_error": str(ex)}
 
-def get_clientes_smartolt(zona: str, equipo: str) -> int | None:
-    if equipo.upper() != "OLT": return None
-    data = fetch_smartolt_clients()
-    if "_error" in data: return None
-
-    zona_lower = zona.lower()
-    for olt_name, total in data.items():
-        if zona_lower in olt_name.lower() or olt_name.lower() in zona_lower: return total
-    return None
+def get_clientes_cmdb(zona: str, equipo: str) -> dict:
+    """Busca en la BD local la cantidad de clientes de un equipo"""
+    try:
+        with engine.connect() as conn:
+            # Búsqueda flexible (ej. si la zona es 'Zaragoza', busca '%Zaragoza%')
+            res = conn.execute(text("SELECT clientes, fuente FROM cmdb_nodos WHERE zona ILIKE :z AND equipo = :e ORDER BY id DESC LIMIT 1"), {"z": f"%{zona}%", "e": equipo}).fetchone()
+            if res: return {"clientes": res[0], "fuente": res[1]}
+    except: pass
+    return {"clientes": 0, "fuente": "Manual"}
 
 def smartolt_status_badge() -> str:
-    data = fetch_smartolt_clients()
+    data = fetch_and_sync_smartolt()
     if "_error" in data: return f"🔴 {data['_error']}"
-    if not data: return "🟡 SmartOLT: Sin OLTs"
-    return f"🟢 SmartOLT: {len(data)} OLTs · {sum(v for v in data.values()):,} ONTs"
+    if not data: return "🟡 SmartOLT: Sin datos"
+    return f"🟢 API Sincronizada: {len(data)} OLTs · {sum(v for v in data.values()):,} ONTs"
 
 # =====================================================================
 # CARGA Y ENRIQUECIMIENTO (RENDIMIENTO)
@@ -249,7 +236,7 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =====================================================================
-# CÁLCULO DE KPIs
+# KPIs MATEMÁTICOS
 # =====================================================================
 def _merge_intervals(intervals: list) -> list:
     if not intervals: return []
@@ -320,7 +307,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     return base
 
 # =====================================================================
-# AUDITORÍA
+# AUDITORÍA Y REPORTES
 # =====================================================================
 def log_audit(action: str, detail: str):
     try:
@@ -328,9 +315,6 @@ def log_audit(action: str, detail: str):
             conn.execute(text("INSERT INTO audit_logs (timestamp,username,action,details) VALUES (:t,:u,:a,:d)"), {"t": datetime.now(SV_TZ).replace(tzinfo=None), "u": st.session_state.get("username", "?"), "a": action, "d": detail})
     except: pass
 
-# =====================================================================
-# GENERACIÓN DE PDF
-# =====================================================================
 def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     def mk_style(name, size, font='Helvetica', color=rl_colors.black, **kw): return ParagraphStyle(name, fontSize=size, fontName=font, textColor=color, **kw)
     s_title  = mk_style('t',  22, 'Helvetica-Bold', rl_colors.HexColor(COLOR_SECONDARY),  spaceAfter=2)
@@ -353,7 +337,7 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
         ['MTTR Real',                     f"{kpis['t1']['mttr']:.2f} horas",'Resolución promedio (clientes > 0)'],
         ['ACD Real (Afectación)',         f"{kpis['t1']['acd']:.2f} horas", 'Percepción real del usuario'],
         ['Impacto Acumulado',             f"{(kpis['global']['db']/24):.2f} días",'Horas totales caídas / 24'],
-        ['Clientes Impactados',           f"{kpis['t1']['clientes']:,}", 'Usuarios afectados'],
+        ['Clientes Impactados',           f"{kpis['t1']['clientes']:,}", 'Usuarios afectados (T1)'],
         ['MTBF (Estabilidad)',            f"{kpis['global']['mtbf']:.1f} horas",'Tiempo medio entre fallas'],
         ['Fallas P1 Críticas',            f"{kpis['global']['p1']}",          '>12 h o >1000 clientes'],
     ]
@@ -376,7 +360,7 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     return buffer.getvalue()
 
 # =====================================================================
-# LOGIN
+# LOGIN SECURE (Sin recuperar contraseña para usuarios)
 # =====================================================================
 def do_login():
     u, p = st.session_state.log_u, st.session_state.log_p
@@ -401,7 +385,7 @@ def do_login():
     st.session_state.log_u = ""; st.session_state.log_p = ""
 
 if not st.session_state.logged_in:
-    st.markdown("<div style='margin-top:10vh;'></div>", unsafe_allow_html=True)
+    st.markdown("<div style='margin-top:15vh;'></div>", unsafe_allow_html=True)
     _, col_c, _ = st.columns([1, 1.2, 1])
     with col_c:
         if st.session_state.log_msg: st.toast(st.session_state.log_msg, icon="✅"); st.session_state.log_msg = ""
@@ -409,31 +393,16 @@ if not st.session_state.logged_in:
         with st.container(border=True):
             st.markdown("<div style='text-align:center;padding:20px 0 10px 0;'><div style='font-size:46px;'>🔐</div><h2 style='margin:10px 0 4px;color:#fff;font-weight:700;'>Acceso NOC Central</h2></div>", unsafe_allow_html=True)
             st.text_input("Usuario", key="log_u"); st.text_input("Contraseña", key="log_p", type="password")
-            _, btn_col, _ = st.columns([1, 2, 1])
-            with btn_col: st.button("Iniciar Sesión", type="primary", on_click=do_login, use_container_width=True)
-            with st.expander("¿Olvidó su contraseña?"):
-                ru = st.text_input("Usuario:", key="pw_reset_user")
-                if ru:
-                    try:
-                        with engine.connect() as conn: ud2 = conn.execute(text("SELECT pregunta,respuesta FROM users WHERE username=:u"), {"u": ru}).fetchone()
-                        if ud2:
-                            st.info(f"**Pregunta:** {ud2[0]}"); rr = st.text_input("Respuesta:", type="password", key="pw_reset_ans")
-                            if rr:
-                                if rr.strip().lower() == str(ud2[1]).lower():
-                                    np_r = st.text_input("Nueva contraseña:", type="password", key="pw_reset_new")
-                                    if st.button("Actualizar") and np_r:
-                                        with engine.begin() as c2: c2.execute(text("UPDATE users SET password_hash=:h, failed_attempts=0, locked_until=NULL, is_banned=FALSE WHERE username=:u"), {"h": hash_pw(np_r), "u": ru})
-                                        st.session_state.log_msg = "Contraseña restablecida."; st.rerun()
-                                else: st.error("❌ Respuesta incorrecta.")
-                        else: st.error("❌ Usuario no encontrado.")
-                    except: pass
+            st.button("Iniciar Sesión", type="primary", on_click=do_login, use_container_width=True)
+            st.caption("Si olvidó su contraseña, contacte al Administrador de Redes.")
     st.stop()
 
 # =====================================================================
-# SIDEBAR
+# SIDEBAR (Navegación y Contexto)
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v25.0")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v26.0")
+    # Forzar ejecución en segundo plano de SmartOLT (Actualiza BD sin que el usuario sienta lag)
     st.caption(smartolt_status_badge())
     st.divider()
 
@@ -536,7 +505,8 @@ with tabs[0]:
     df_map['lon'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
     agg = (df_map.groupby(['zona_completa','lat','lon']).agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum')).reset_index())
     agg['Clientes_sz'] = agg['Clientes'].clip(lower=1)
-    fig_map = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona_completa", size="Clientes_sz", color="Horas", color_continuous_scale="Inferno", zoom=8.5, mapbox_style="carto-darkmatter", labels={"Clientes_sz": "Clientes"}, title="Impacto Geográfico (Zonas Afectadas)")
+    
+    fig_map = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona_completa", size="Clientes_sz", color="Horas", color_continuous_scale="Inferno", zoom=8.5, mapbox_style="carto-darkmatter", labels={"Clientes_sz": "Clientes"}, title="Impacto Geográfico por Nodo")
     fig_map.update_layout(margin=dict(l=0,r=0,t=40,b=0), height=450)
     st.plotly_chart(fig_map, use_container_width=True)
 
@@ -547,12 +517,15 @@ with tabs[0]:
     df_heat['Día']  = pd.Categorical(df_heat['inicio_incidente'].dt.dayofweek.map(dias_map), categories=dias_orden, ordered=True)
     df_heat['Hora'] = df_heat['inicio_incidente'].dt.hour
     df_hm = df_heat.groupby(['Día','Hora']).size().reset_index(name='Fallas')
+    
     fig_hm = px.density_heatmap(df_hm, x='Hora', y='Día', z='Fallas', color_continuous_scale='Blues', nbinsx=24, title="Mapa de Calor (Concentración de Fallas por Hora)")
     fig_hm.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=350)
     st.plotly_chart(fig_hm, use_container_width=True)
 
+    st.write("")
     st.divider()
     st.markdown("### 📊 Responsabilidad y Causas Principales")
+    
     c_pie, c_bar = st.columns(2)
     with c_pie:
         df_m['Tipo'] = df_m['es_externa'].map({True: 'Externa (Fuerza Mayor)', False: 'Interna (Infraestructura / NOC)'})
@@ -561,6 +534,7 @@ with tabs[0]:
         fig_p.update_traces(textinfo='percent', textposition='inside')
         fig_p.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=400)
         st.plotly_chart(fig_p, use_container_width=True)
+        
     with c_bar:
         dc = (df_m.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=True).tail(8))
         fig_b = px.bar(dc, x='Alertas', y='causa_raiz', orientation='h', color_discrete_sequence=[COLOR_PRIMARY], text_auto='.0f', title="Top Causas Raíz")
@@ -575,8 +549,6 @@ if role in ('admin', 'auditor') and len(tabs) > 1:
     with tabs[1]:
         st.title("📝 Registrar Evento Operativo")
         fk = st.session_state.form_reset
-        
-        cmdb_df = load_cmdb()
 
         zonas_form   = [z[0] for z in get_zonas()]
         equipos_form = get_cat("cat_equipos")
@@ -601,27 +573,26 @@ if role in ('admin', 'auditor') and len(tabs) > 1:
                 cat_f = c2f.selectbox("🏢 Segmento",  DEFAULT_CATEGORIAS, key=f"c_{fk}")
                 eq_f  = st.selectbox("🖥️ Equipo",     equipos_form,    key=f"e_{fk}")
 
-                smartolt_cl = get_clientes_smartolt(z_f, eq_f)
-                cmdb_cl = 0
-                if smartolt_cl is None and not cmdb_df.empty:
-                    m_cmdb = cmdb_df[(cmdb_df['zona'] == z_f) & (cmdb_df['subzona'] == sz_db) & (cmdb_df['equipo'] == eq_f)]
-                    if not m_cmdb.empty: cmdb_cl = int(m_cmdb['clientes'].iloc[0])
-
-                d_cl = smartolt_cl if smartolt_cl is not None else cmdb_cl
-                source = "SmartOLT 🔴" if smartolt_cl is not None else ("CMDB local" if cmdb_cl > 0 else "manual")
+                # Buscar en CMDB
+                cmdb_data = get_clientes_cmdb(z_f, eq_f)
+                d_cl = cmdb_data['clientes']
+                fuente_dato = cmdb_data['fuente']
 
                 st.divider()
                 if cat_f == "Cliente Corporativo":
                     cl_f = 1
                     st.number_input("👤 Clientes Afectados", value=1, disabled=True, key=f"cl_{fk}")
                     st.caption("🏢 Corporativo: fijado en 1 enlace.")
+                    imp_pct = 0.0
                 elif cat_f == CAT_INTERNA:
                     cl_f = 0
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
                     st.caption("🔧 Interna: fijado en 0 clientes.")
+                    imp_pct = 0.0
                 else:
-                    if smartolt_cl is not None: st.info(f"🔴 **SmartOLT:** {smartolt_cl:,} clientes activos en esta OLT")
-                    cl_f = st.number_input(f"👤 Clientes Afectados *(fuente: {source})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
+                    if fuente_dato == 'SmartOLT': st.info(f"🔴 **SmartOLT:** {d_cl:,} clientes totales registrados en esta OLT")
+                    cl_f = st.number_input(f"👤 Clientes Afectados *(fuente base: {fuente_dato})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
+                    imp_pct = round((cl_f / d_cl) * 100, 2) if d_cl > 0 else 0.0
 
                 st.divider()
                 
@@ -666,17 +637,12 @@ if role in ('admin', 'auditor') and len(tabs) > 1:
 
                                 with engine.begin() as conn:
                                     conn.execute(text("""
-                                        INSERT INTO incidents (zona, subzona, afectacion_general, servicio, categoria, equipo_afectado, inicio_incidente, fin_incidente, clientes_afectados, causa_raiz, descripcion, duracion_horas, conocimiento_tiempos)
-                                        VALUES (:z, :sz, :ag, :s, :c, :e, :idi, :idf, :cl, :cr, :d, :dur, :con)
-                                    """), {"z": z_f, "sz": sz_db, "ag": ag, "s": srv_f, "c": cat_f, "e": eq_f, "idi": idi, "idf": idf, "cl": cl_f, "cr": cr_f, "d": desc_f, "dur": dur, "con": conocimiento})
-
-                                    conn.execute(text("""
-                                        INSERT INTO inventario_nodos (zona, subzona, equipo, clientes) VALUES (:z, :sz, :e, :cl)
-                                        ON CONFLICT (zona, subzona, equipo) DO UPDATE SET clientes = EXCLUDED.clientes WHERE EXCLUDED.clientes > inventario_nodos.clientes
-                                    """), {"z": z_f, "sz": sz_db, "e": eq_f, "cl": cl_f})
+                                        INSERT INTO incidents (zona, subzona, afectacion_general, servicio, categoria, equipo_afectado, inicio_incidente, fin_incidente, clientes_afectados, impacto_porcentaje, causa_raiz, descripcion, duracion_horas, conocimiento_tiempos)
+                                        VALUES (:z, :sz, :ag, :s, :c, :e, :idi, :idf, :cl, :imp, :cr, :d, :dur, :con)
+                                    """), {"z": z_f, "sz": sz_db, "ag": ag, "s": srv_f, "c": cat_f, "e": eq_f, "idi": idi, "idf": idf, "cl": cl_f, "imp": imp_pct, "cr": cr_f, "d": desc_f, "dur": dur, "con": conocimiento})
 
                                 log_audit("INSERT", f"Falla en {z_f} | {eq_f} | {cat_f}")
-                                load_data_rango.clear(); load_cmdb.clear()
+                                load_data_rango.clear()
                                 st.session_state.form_reset += 1
                                 st.rerun()
                             except Exception as e: st.toast(f"Error al guardar: {e}", icon="❌")
@@ -711,7 +677,7 @@ if role in ('admin', 'auditor') and len(tabs) > 2:
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_page.insert(0, "Sel", False)
 
-            drop_cols = [c for c in ['deleted_at','Severidad','zona_completa','es_externa'] if c in df_page.columns]
+            drop_cols = [c for c in ['deleted_at','Severidad','zona_completa','es_externa', 'impacto_porcentaje'] if c in df_page.columns]
 
             ed_df = st.data_editor(
                 df_page.drop(columns=drop_cols, errors='ignore'),
@@ -768,7 +734,7 @@ if role in ('admin', 'auditor') and len(tabs) > 2:
 if role == 'admin' and len(tabs) > 3:
     with tabs[3]:
         st.markdown("### ⚙️ Configuración del Sistema")
-        st.caption("Administra catálogos y usuarios. Los cambios se reflejan inmediatamente en la UI.")
+        st.caption("Administra catálogos, CMDB y accesos. Los cambios impactan a todos los usuarios en tiempo real.")
 
         t_zonas, t_equipos, t_causas, t_usuarios = st.tabs(["🗺️ Zonas", "🖥️ Equipos", "🛠️ Causas", "👤 Usuarios y Accesos"])
 
@@ -838,7 +804,7 @@ if role == 'admin' and len(tabs) > 3:
                     except: st.error("Error: Causa duplicada.")
 
         with t_usuarios:
-            st.markdown("#### Control de Accesos y Auditoría")
+            st.markdown("#### Control de Accesos y Gestión de Contraseñas")
             cu, clg = st.columns([1, 2], gap="large")
             with cu:
                 with st.form("form_u", clear_on_submit=True):
@@ -846,14 +812,24 @@ if role == 'admin' and len(tabs) > 3:
                     nu    = st.text_input("Usuario")
                     np_u  = st.text_input("Contraseña", type="password")
                     nrl   = st.selectbox("Rol Asignado", ["viewer", "auditor", "admin"])
-                    npr   = st.text_input("Pregunta de Seguridad (Opcional)")
-                    nrs   = st.text_input("Respuesta")
                     if st.form_submit_button("Crear Cuenta") and nu and np_u:
                         try:
                             with engine.begin() as conn:
-                                conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES (:u,:h,:r,:p,:rs)"), {"u": nu, "h": hash_pw(np_u), "r": nrl, "p": npr, "rs": nrs})
+                                conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES (:u,:h,:r)"), {"u": nu, "h": hash_pw(np_u), "r": nrl})
                             st.toast("✅ Usuario creado exitosamente."); time.sleep(0.5); st.rerun()
                         except: st.toast("❌ Error: Nombre de usuario duplicado.", icon="❌")
+                
+                with st.form("form_reset_pw", clear_on_submit=True):
+                    st.markdown("**Restablecer Contraseña (Admin)**")
+                    u_reset = st.text_input("Escriba el nombre de usuario exacto")
+                    p_reset = st.text_input("Nueva Contraseña", type="password")
+                    if st.form_submit_button("Restablecer") and u_reset and p_reset:
+                        try:
+                            with engine.begin() as conn:
+                                res = conn.execute(text("UPDATE users SET password_hash=:h, failed_attempts=0, locked_until=NULL WHERE username=:u"), {"h": hash_pw(p_reset), "u": u_reset})
+                                if res.rowcount > 0: st.toast("✅ Contraseña actualizada.")
+                                else: st.toast("❌ Usuario no encontrado.", icon="❌")
+                        except Exception as e: st.toast(f"Error: {e}")
 
             with clg:
                 try:
