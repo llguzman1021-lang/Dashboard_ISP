@@ -1,9 +1,9 @@
 streamlit
 pandas
 plotly
-bcrypt
-pytz
 SQLAlchemy
-reportlab
 psycopg2-binary
+pytz
+bcrypt
+reportlab
 requests
