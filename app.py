@@ -64,8 +64,18 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-for _k, _v in [('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''), ('log_u', ''), ('log_p', ''), ('log_err', ''), ('log_msg', '')]:
+# Variables de estado (Incluye el nuevo sistema de Flash Messages)
+for _k, _v in [('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''), ('log_u', ''), ('log_p', ''), ('flash_msg', ''), ('flash_type', '')]:
     if _k not in st.session_state: st.session_state[_k] = _v
+
+# Lanzador de notificaciones visuales (Asegura que se vean después de un rerun)
+if st.session_state.flash_msg:
+    if st.session_state.flash_type == 'error':
+        st.error(st.session_state.flash_msg, icon="❌")
+    else:
+        st.toast(st.session_state.flash_msg, icon="✅")
+    st.session_state.flash_msg = ""
+    st.session_state.flash_type = ""
 
 # =====================================================================
 # BASE DE DATOS Y ARQUITECTURA RELACIONAL
@@ -86,7 +96,6 @@ def init_db():
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_causas  (id SERIAL PRIMARY KEY, nombre VARCHAR(150) UNIQUE NOT NULL, es_externa BOOLEAN DEFAULT FALSE)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_servicios (id SERIAL PRIMARY KEY, nombre VARCHAR(100) UNIQUE NOT NULL)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cmdb_nodos (id SERIAL PRIMARY KEY, zona VARCHAR(150), equipo VARCHAR(100), clientes INT DEFAULT 0, fuente VARCHAR(50) DEFAULT 'Manual', ultima_sincronizacion TIMESTAMP DEFAULT CURRENT_TIMESTAMP, UNIQUE(zona, equipo))"))
-        
         conn.execute(text("""
             CREATE TABLE IF NOT EXISTS incidents (
                 id SERIAL PRIMARY KEY, zona VARCHAR(150) NOT NULL, subzona VARCHAR(150), afectacion_general BOOLEAN DEFAULT TRUE,
@@ -186,7 +195,7 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =====================================================================
-# KPIs MATEMÁTICOS (Anti-Doble Descuento y Zonas Geográficas)
+# KPIs MATEMÁTICOS
 # =====================================================================
 def _merge_intervals(intervals: list) -> list:
     if not intervals: return []
@@ -215,9 +224,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
 
     base["abiertos"] = len(df[df['estado'] == 'Abierto'])
     
-    # Usamos SOLO tickets Cerrados para matemáticas de disponibilidad y MTTR
     df_cerrados = df[df['estado'] == 'Cerrado']
-    
     df_int = df_cerrados[df_cerrados['categoria'] == CAT_INTERNA]
     df_ext = df_cerrados[df_cerrados['categoria'] != CAT_INTERNA]
 
@@ -237,7 +244,6 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
 
     df_exact = df_ext[df_ext['conocimiento_tiempos'] == 'Total']
     
-    # === CÁLCULO DE SLA GEOGRÁFICO ===
     if not df_exact.empty:
         df_sla = df_exact[df_exact['causa_raiz'] != 'Mantenimiento Programado']
         for z in df_sla['zona'].unique():
@@ -264,7 +270,6 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         total_hc = (df_t1['duracion_horas'] * df_t1['clientes_afectados']).sum()
         base["t1"]["acd"] = float(total_hc / base["t1"]["clientes"]) if base["t1"]["clientes"] > 0 else 0.0
 
-    # === CÁLCULO DE SLA GLOBAL (Anti doble descuento) ===
     if not df_exact.empty:
         df_sla_global = df_exact[df_exact['causa_raiz'] != 'Mantenimiento Programado']
         s_cl  = df_sla_global['inicio_incidente'].clip(lower=rng_s)
@@ -279,7 +284,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     return base
 
 # =====================================================================
-# AUDITORÍA Y REPORTES
+# AUDITORÍA Y REPORTES PDF
 # =====================================================================
 def log_audit(action: str, detail: str):
     try:
@@ -360,8 +365,6 @@ if not st.session_state.logged_in:
     st.markdown("<div style='margin-top:15vh;'></div>", unsafe_allow_html=True)
     _, col_c, _ = st.columns([1, 1.2, 1])
     with col_c:
-        if st.session_state.log_msg: st.toast(st.session_state.log_msg, icon="✅"); st.session_state.log_msg = ""
-        if st.session_state.log_err: st.error(st.session_state.log_err); st.session_state.log_err = ""
         with st.container(border=True):
             st.markdown("<div style='text-align:center;padding:20px 0 10px 0;'><div style='font-size:46px;'>🔐</div><h2 style='margin:10px 0 4px;color:#fff;font-weight:700;'>Acceso NOC Central</h2></div>", unsafe_allow_html=True)
             st.text_input("Usuario", key="log_u"); st.text_input("Contraseña", key="log_p", type="password")
@@ -373,7 +376,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.0")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.1 (Stable)")
     st.divider()
 
     anio_act = datetime.now(SV_TZ).year
@@ -473,11 +476,11 @@ with tabs[t_idx]:
 
         st.divider()
 
-        # ── IMPACTO A CLIENTES (Con Banner de Inteligencia Manual) ──
+        # ── IMPACTO A CLIENTES ──
         st.markdown("### 👥 Impacto Directo a Clientes (Datos Exactos)")
-        st.info("💡 **Inteligencia Operativa:** Los valores de Clientes Afectados y ACD se basan en el registro histórico de la base de datos de configuración (CMDB) y los reportes ingresados por los técnicos del NOC.")
+        st.info("💡 **Inteligencia de Datos:** Los valores de Clientes Afectados son calculados utilizando el histórico aprendido por el sistema en eventos previos (CMDB Autónoma).")
 
-        if kpis['t1']['fallas'] == 0: st.success("🟢 No hay incidentes masivos cerrados con afectación a clientes.")
+        if kpis['t1']['fallas'] == 0: st.success("🟢 No hay incidentes masivos cerrados con afectación a clientes en este periodo.")
         else:
             t1a, t1b, t1c, t1d = st.columns(4)
             t1a.metric("Fallas Completas", kpis['t1']['fallas'], delta=_delta('t1','fallas', fmt="{:+.0f}"), delta_color="inverse")
@@ -569,12 +572,12 @@ if role in ('admin', 'auditor'):
 
                 st.divider()
                 
-                # Reglas estrictas
+                # Reglas estrictas UX
                 if z_f == "San Salvador (Central)":
                     cl_f = 0
                     imp_pct = 0.0
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
-                    st.warning("⚠️ Centro de Datos: Equipos Core y Broadcast. No aplica conteo de ONTs.")
+                    st.warning("⚠️ Centro de Datos: Equipos Core. No aplica conteo de ONTs.")
                 elif cat_f == "Cliente Corporativo":
                     cl_f = 1
                     imp_pct = 0.0
@@ -586,7 +589,7 @@ if role in ('admin', 'auditor'):
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
                     st.caption("🔧 Interna: fijado en 0 clientes.")
                 else:
-                    cl_f = st.number_input(f"👤 Clientes Afectados *(registro histórico de la CMDB: {d_cl})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
+                    cl_f = st.number_input(f"👤 Clientes Afectados *(sugerencia basada en histórico: {d_cl})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
                     imp_pct = round((cl_f / d_cl) * 100, 2) if d_cl > 0 else 0.0
 
                 st.divider()
@@ -599,12 +602,14 @@ if role in ('admin', 'auditor'):
                     hi_desc = st.checkbox("No conozco la hora de inicio", key=f"hi_desc_{fk}")
                     if not hi_desc: hi_val = st.time_input("🕒 Hora de Inicio", key=f"hi_val_{fk}")
                     else: hi_val = None; st.info("ℹ️ Sin hora de inicio → Evento Incompleto.")
+                
                 with ct2:
+                    # UX UI Mejora: Si está abierto, ocultamos los campos de cierre para no confundir.
                     if es_abierto:
                         ff = fi
                         hf_val = None
                         hf_desc = True
-                        st.warning("🚨 El ticket quedará Abierto.")
+                        st.warning("🚨 El ticket se guardará como 'Falla en Curso'. Podrás cerrarlo luego desde el Historial.")
                     else:
                         ff  = st.date_input("📅 Fecha de Cierre", key=f"ff_{fk}")
                         hf_desc = st.checkbox("No conozco la hora de cierre", key=f"hf_desc_{fk}")
@@ -627,11 +632,12 @@ if role in ('admin', 'auditor'):
                 if st.button("💾 Guardar Registro", type="primary"):
                     err = False
                     if (not es_abierto) and (not hi_desc) and (not hf_desc) and (fi > ff or (fi == ff and hi_val >= hf_val)):
-                        st.toast("❌ Error: el cierre no puede ser anterior al inicio.", icon="🚨")
+                        st.session_state.flash_msg = "La fecha/hora de cierre no puede ser anterior al inicio."
+                        st.session_state.flash_type = "error"
                         err = True
 
                     if not err:
-                        with st.spinner("Guardando…"):
+                        with st.spinner("Guardando en Base de Datos…"):
                             try:
                                 hi_db = hi_val if not hi_desc else datetime_time(0, 0)
                                 idi = SV_TZ.localize(datetime.combine(fi, hi_db))
@@ -656,8 +662,12 @@ if role in ('admin', 'auditor'):
                                 log_audit("INSERT", f"Falla ({estado_db}) en {z_f}")
                                 load_data_rango.clear()
                                 st.session_state.form_reset += 1
+                                st.session_state.flash_msg = "✅ Registro guardado exitosamente."
+                                st.session_state.flash_type = "success"
                                 st.rerun()
-                            except Exception as e: st.toast(f"Error: {e}", icon="❌")
+                            except Exception as e: 
+                                st.session_state.flash_msg = f"Error de BD: {e}"
+                                st.session_state.flash_type = "error"
 
         with ccx:
             st.markdown("#### 🕒 Registros Recientes")
@@ -667,7 +677,7 @@ if role in ('admin', 'auditor'):
                         ico = "🚨" if r.get('estado') == 'Abierto' else ("🔧" if r.get('categoria') == CAT_INTERNA else "📡")
                         st.markdown(f"**{ico} {r['zona_completa']}**")
                         st.caption(f"{str(r.get('causa_raiz',''))[:30]}… | 👥 {r['clientes_afectados']}")
-            else: st.info("Sin registros.")
+            else: st.info("Sin registros en la tabla.")
     t_idx += 1
 
 # ─────────────────────────────────────────────
@@ -703,6 +713,8 @@ if role in ('admin', 'auditor'):
                                 conn.execute(text("UPDATE incidents SET estado='Cerrado', fin_incidente=:f, duracion_horas=:d, conocimiento_tiempos='Total' WHERE id=:id"), {"f": fin_dt_val, "d": dur_h, "id": sel_t})
                             log_audit("CLOSE TICKET", f"Ticket ID {sel_t} cerrado exitosamente.")
                             load_data_rango.clear()
+                            st.session_state.flash_msg = "✅ Ticket cerrado correctamente."
+                            st.session_state.flash_type = "success"
                             st.rerun()
 
         st.divider()
@@ -753,12 +765,18 @@ if role in ('admin', 'auditor'):
                     if cb1.button("♻️ Restaurar Seleccionados", type="primary", use_container_width=True):
                         with engine.begin() as conn:
                             for rid in f_sel['id']: conn.execute(text("UPDATE incidents SET deleted_at=NULL WHERE id=:id"), {"id": int(rid)})
-                        log_audit("RESTORE", f"{len(f_sel)} registro(s)."); load_data_rango.clear(); st.rerun()
+                        log_audit("RESTORE", f"{len(f_sel)} registro(s)."); load_data_rango.clear()
+                        st.session_state.flash_msg = "♻️ Registros restaurados."
+                        st.session_state.flash_type = "success"
+                        st.rerun()
                 else:
                     if cb1.button("🗑️ Eliminar Seleccionados", type="primary", use_container_width=True):
                         with engine.begin() as conn:
                             for rid in f_sel['id']: conn.execute(text("UPDATE incidents SET deleted_at=CURRENT_TIMESTAMP WHERE id=:id"), {"id": int(rid)})
-                        log_audit("DELETE (SOFT)", f"{len(f_sel)} registro(s)."); load_data_rango.clear(); st.rerun()
+                        log_audit("DELETE (SOFT)", f"{len(f_sel)} registro(s)."); load_data_rango.clear()
+                        st.session_state.flash_msg = "🗑️ Registros eliminados exitosamente."
+                        st.session_state.flash_type = "success"
+                        st.rerun()
 
             if h_cam and cb2.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
                 with engine.begin() as conn:
@@ -780,19 +798,22 @@ if role in ('admin', 'auditor'):
                                 UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, estado=:est, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id
                             """), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "est": r.get('estado','Cerrado'), "idi": ini_dt, "idf": fin_dt_sql, "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur_u, "con": con_u, "id": int(r['id'])})
                 log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
-                load_data_rango.clear(); st.rerun()
+                load_data_rango.clear()
+                st.session_state.flash_msg = "💾 Cambios guardados correctamente."
+                st.session_state.flash_type = "success"
+                st.rerun()
 
             st.divider()
             st.download_button("📥 Descargar CSV de esta Tabla", df_d.drop(columns=drop_cols, errors='ignore').to_csv(index=False).encode(), f"NOC_Export_{fecha_ini}_{fecha_fin}.csv", "text/csv", use_container_width=True)
     t_idx += 1
 
 # ─────────────────────────────────────────────
-# TAB 3 — CONFIGURACIÓN
+# TAB 4 — CONFIGURACIÓN
 # ─────────────────────────────────────────────
 if role == 'admin' and len(tabs) > t_idx:
     with tabs[t_idx]:
         st.markdown("### ⚙️ Configuración del Sistema")
-        st.caption("Administra catálogos y usuarios.")
+        st.caption("Administra catálogos y usuarios. Los cambios se reflejan inmediatamente en la UI.")
 
         t_zonas, t_equipos, t_causas, t_usuarios = st.tabs(["🗺️ Zonas", "🖥️ Equipos", "🛠️ Causas", "👤 Usuarios y Accesos"])
 
@@ -804,8 +825,13 @@ if role == 'admin' and len(tabs) > t_idx:
                 if c_zdel.button("🗑️ Eliminar", key=f"del_z_{z_nombre}"):
                     try:
                         with engine.begin() as conn: conn.execute(text("DELETE FROM cat_zonas WHERE nombre=:n"), {"n": z_nombre})
-                        clear_catalog_cache(); st.rerun()
-                    except Exception as ex: st.error(str(ex))
+                        clear_catalog_cache()
+                        st.session_state.flash_msg = "🗑️ Zona eliminada."
+                        st.rerun()
+                    except Exception: 
+                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso por un incidente."
+                        st.session_state.flash_type = "error"
+                        st.rerun()
             st.divider()
             with st.form("form_add_zona", clear_on_submit=True):
                 st.markdown("**➕ Agregar Nueva Zona**")
@@ -816,8 +842,11 @@ if role == 'admin' and len(tabs) > t_idx:
                 if st.form_submit_button("Agregar Zona") and nz:
                     try:
                         with engine.begin() as conn: conn.execute(text("INSERT INTO cat_zonas (nombre,lat,lon) VALUES (:n,:la,:lo)"), {"n": nz, "la": nlat, "lo": nlon})
-                        clear_catalog_cache(); st.rerun()
-                    except: st.error("Error: Zona duplicada.")
+                        clear_catalog_cache()
+                        st.session_state.flash_msg = "✅ Zona agregada exitosamente."
+                        st.rerun()
+                    except: 
+                        st.toast("Error: Zona duplicada.", icon="❌")
 
         with t_equipos:
             st.markdown("#### Gestión de Equipos de Red")
@@ -827,8 +856,13 @@ if role == 'admin' and len(tabs) > t_idx:
                 if c_edel.button("🗑️ Eliminar", key=f"del_eq_{eq}"):
                     try:
                         with engine.begin() as conn: conn.execute(text("DELETE FROM cat_equipos WHERE nombre=:n"), {"n": eq})
-                        clear_catalog_cache(); st.rerun()
-                    except Exception as ex: st.error(str(ex))
+                        clear_catalog_cache()
+                        st.session_state.flash_msg = "🗑️ Equipo eliminado."
+                        st.rerun()
+                    except Exception:
+                        st.session_state.flash_msg = "❌ Error: El equipo está en uso por un incidente."
+                        st.session_state.flash_type = "error"
+                        st.rerun()
             st.divider()
             with st.form("form_add_eq", clear_on_submit=True):
                 st.markdown("**➕ Agregar Nuevo Equipo**")
@@ -836,8 +870,10 @@ if role == 'admin' and len(tabs) > t_idx:
                 if st.form_submit_button("Agregar Equipo") and ne:
                     try:
                         with engine.begin() as conn: conn.execute(text("INSERT INTO cat_equipos (nombre) VALUES (:n)"), {"n": ne})
-                        clear_catalog_cache(); st.rerun()
-                    except: st.error("Error: Equipo duplicado.")
+                        clear_catalog_cache()
+                        st.session_state.flash_msg = "✅ Equipo agregado exitosamente."
+                        st.rerun()
+                    except: st.toast("Error: Equipo duplicado.", icon="❌")
 
         with t_causas:
             st.markdown("#### Gestión de Causas Raíz")
@@ -848,8 +884,13 @@ if role == 'admin' and len(tabs) > t_idx:
                 if c_cdel.button("🗑️ Eliminar", key=f"del_ca_{causa}"):
                     try:
                         with engine.begin() as conn: conn.execute(text("DELETE FROM cat_causas WHERE nombre=:n"), {"n": causa})
-                        clear_catalog_cache(); st.rerun()
-                    except Exception as e: st.error(str(e))
+                        clear_catalog_cache()
+                        st.session_state.flash_msg = "🗑️ Causa eliminada."
+                        st.rerun()
+                    except Exception:
+                        st.session_state.flash_msg = "❌ Error: La causa está en uso por un incidente."
+                        st.session_state.flash_type = "error"
+                        st.rerun()
             st.divider()
             with st.form("form_add_causa", clear_on_submit=True):
                 st.markdown("**➕ Agregar Nueva Causa**")
@@ -858,8 +899,10 @@ if role == 'admin' and len(tabs) > t_idx:
                 if st.form_submit_button("Agregar Causa") and nc:
                     try:
                         with engine.begin() as conn: conn.execute(text("INSERT INTO cat_causas (nombre,es_externa) VALUES (:n,:e)"), {"n": nc, "e": nce})
-                        clear_catalog_cache(); st.rerun()
-                    except: st.error("Error: Causa duplicada.")
+                        clear_catalog_cache()
+                        st.session_state.flash_msg = "✅ Causa agregada exitosamente."
+                        st.rerun()
+                    except: st.toast("Error: Causa duplicada.", icon="❌")
 
         with t_usuarios:
             st.markdown("#### Control de Accesos y Contraseñas")
@@ -874,7 +917,8 @@ if role == 'admin' and len(tabs) > t_idx:
                         try:
                             with engine.begin() as conn:
                                 conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES (:u,:h,:r)"), {"u": nu, "h": hash_pw(np_u), "r": nrl})
-                            st.toast("✅ Usuario creado."); time.sleep(0.5); st.rerun()
+                            st.session_state.flash_msg = "✅ Usuario creado."
+                            st.rerun()
                         except: st.toast("❌ Nombre duplicado.", icon="❌")
                 
                 with st.form("form_reset_pw", clear_on_submit=True):
@@ -885,7 +929,9 @@ if role == 'admin' and len(tabs) > t_idx:
                         try:
                             with engine.begin() as conn:
                                 res = conn.execute(text("UPDATE users SET password_hash=:h, failed_attempts=0, locked_until=NULL WHERE username=:u"), {"h": hash_pw(p_reset), "u": u_reset})
-                                if res.rowcount > 0: st.toast("✅ Contraseña actualizada.")
+                                if res.rowcount > 0: 
+                                    st.session_state.flash_msg = "✅ Contraseña actualizada."
+                                    st.rerun()
                                 else: st.toast("❌ Usuario no encontrado.", icon="❌")
                         except Exception as e: st.toast(f"Error: {e}")
 
@@ -909,6 +955,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         else:
                             with engine.begin() as conn:
                                 for rid in filas_del['id']: conn.execute(text("DELETE FROM users WHERE id=:id"), {"id": int(rid)})
+                            st.session_state.flash_msg = "🗑️ Usuario eliminado."
                             st.rerun()
 
                     if hay_cambios and u2c.button("💾 Guardar Permisos", type="primary", use_container_width=True):
@@ -916,6 +963,7 @@ if role == 'admin' and len(tabs) > t_idx:
                             for i, er in ed_usrs.iterrows():
                                 orig = df_usrs.drop(columns=['Sel']).iloc[i]
                                 if not orig.equals(er.drop('Sel')): conn.execute(text("UPDATE users SET role=:r,is_banned=:b,failed_attempts=:f WHERE id=:id"), {"r": str(er['role']), "b": bool(er['is_banned']), "f": int(er['failed_attempts']), "id": int(er['id'])})
+                        st.session_state.flash_msg = "💾 Permisos de usuario guardados."
                         st.rerun()
                 except Exception as e: st.error(str(e))
 
