@@ -13,54 +13,51 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.units import cm
 
 # =====================================================================
-# CONFIGURACIÓN GLOBAL
+# CONFIGURACIÓN GLOBAL Y CONSTANTES
 # =====================================================================
 st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="🌐")
 SV_TZ = pytz.timezone('America/El_Salvador')
 
-ARPU_USD  = 30.0
-HOURS_MONTH = 720.0
+# Variables corporativas
+COLOR_PRIMARY   = '#f15c22'
+COLOR_SECONDARY = '#1d2c59'
+COLOR_TEAL      = '#29b09d'
+COLOR_DANGER    = '#ff2b2b'
+PALETA_CORP     = [COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER]
 
-PALETA_CORP = ['#f15c22', '#1d2c59', '#29b09d', '#ff9f43', '#83c9ff', '#ff2b2b']
-
-# Catálogos por defecto
 DEFAULT_ZONAS = [
-    ("El Rosario",           13.4886, -89.0256), ("ARG",                  13.4880, -89.3200),
-    ("Tepezontes",           13.6214, -89.0125), ("La Libertad",          13.4883, -89.3200),
-    ("El Tunco",             13.4930, -89.3830), ("Costa del Sol",        13.3039, -88.9450),
-    ("Zacatecoluca",         13.5048, -88.8710), ("Zaragoza",             13.5850, -89.2890),
-    ("Santiago Nonualco",    13.5186, -88.9442), ("Rio Mar",              13.4900, -89.3500),
-    ("San Salvador (Central)",13.6929, -89.2182),
+    ("El Rosario", 13.4886, -89.0256), ("ARG", 13.4880, -89.3200), ("Tepezontes", 13.6214, -89.0125),
+    ("La Libertad", 13.4883, -89.3200), ("El Tunco", 13.4930, -89.3830), ("Costa del Sol", 13.3039, -88.9450),
+    ("Zacatecoluca", 13.5048, -88.8710), ("Zaragoza", 13.5850, -89.2890), ("Santiago Nonualco", 13.5186, -88.9442),
+    ("Rio Mar", 13.4900, -89.3500), ("San Salvador (Central)", 13.6929, -89.2182),
 ]
 DEFAULT_EQUIPOS = ["ONT", "Repetidor Wi-Fi", "Antena Ubiquiti", "OLT", "Caja NAP", "RB/Mikrotik", "Switch", "Servidor", "Fibra Principal", "Sistema UNIFI"]
 DEFAULT_CAUSAS = [
-    ("Corte de Fibra por Terceros", True), ("Corte de Fibra (No Especificado)", False),
-    ("Caída de Árboles sobre Fibra", True), ("Falla de Energía Comercial", True),
-    ("Corrosión en Equipos", False), ("Daños por Fauna", True), ("Falla de Hardware", False),
-    ("Falla de Configuración", False), ("Falla de Redundancia", False), ("Saturación de Tráfico", False),
-    ("Saturación en Servidor UNIFI", False), ("Falla de Inicio en UNIFI", False),
+    ("Corte de Fibra por Terceros", True), ("Corte de Fibra (No Especificado)", False), ("Caída de Árboles sobre Fibra", True),
+    ("Falla de Energía Comercial", True), ("Corrosión en Equipos", False), ("Daños por Fauna", True),
+    ("Falla de Hardware", False), ("Falla de Configuración", False), ("Falla de Redundancia", False),
+    ("Saturación de Tráfico", False), ("Saturación en Servidor UNIFI", False), ("Falla de Inicio en UNIFI", False),
     ("Mantenimiento Programado", False), ("Vandalismo o Hurto", True), ("Condiciones Climáticas", True),
 ]
 DEFAULT_SERVICIOS = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)", "Internet/Cable TV", "Aplicativos internos"]
 DEFAULT_CATEGORIAS = ["Red Multinet", "Cliente Corporativo", "Falla Interna (No afecta clientes)"]
 CAT_INTERNA = "Falla Interna (No afecta clientes)"
-
 MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
 
 st.markdown("""
 <style>
 div.stButton > button { border: none !important; outline: none !important; box-shadow: none !important; border-radius: 8px; width: 100%; font-weight: 600; transition: all 0.3s ease !important; }
-div.stButton > button:focus  { border: none !important; outline: none !important; box-shadow: none !important; }
 div.stButton > button:hover  { transform: translateY(-2px); }
 [data-testid="stMetricValue"] { color: #ffffff !important; font-size: 34px !important; font-weight: 800 !important; }
 [data-testid="stMetricLabel"] { color: #a5a8b5 !important; font-size: 14px !important; font-weight: 500 !important; }
 [data-testid="stMetricDelta"] svg { width: 20px; height: 20px; }
 [data-testid="stMetricDelta"] div { font-size: 13px !important; font-weight: 600 !important; }
 button[data-baseweb="tab"] { background-color: #1e1e2f !important; border-radius: 12px 12px 0 0 !important; margin-right: 8px !important; padding: 13px 26px !important; border: 2px solid #333 !important; border-bottom: none !important; transition: all 0.3s; }
-button[data-baseweb="tab"]:hover                   { background-color: #2a2a3f !important; }
-button[data-baseweb="tab"][aria-selected="true"]   { background-color: #f15c22 !important; border-color: #f15c22 !important; }
-button[data-baseweb="tab"] p                       { font-size: 15px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0 !important; }
+button[data-baseweb="tab"]:hover { background-color: #2a2a3f !important; }
+button[data-baseweb="tab"][aria-selected="true"] { background-color: #f15c22 !important; border-color: #f15c22 !important; }
+button[data-baseweb="tab"] p { font-size: 15px !important; font-weight: 700 !important; color: #a5a8b5 !important; margin: 0 !important; }
 button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; }
+.st-emotion-cache-1wivap2 { padding-top: 1.5rem; }
 </style>
 """, unsafe_allow_html=True)
 
@@ -69,7 +66,7 @@ for _k, _v in [('logged_in', False), ('role', ''), ('username', ''), ('log_u', '
     if _k not in st.session_state: st.session_state[_k] = _v
 
 # =====================================================================
-# MOTOR BD
+# BASE DE DATOS Y CACHÉ EXTREMO (PERFORMANCE)
 # =====================================================================
 @st.cache_resource
 def get_engine(): return create_engine(st.secrets["neon_dsn"], pool_pre_ping=True, pool_recycle=300)
@@ -111,23 +108,33 @@ def init_db():
 try: init_db()
 except Exception as _e: st.error(f"Error DB Inicialización: {_e}")
 
+# Estas funciones ahora están cacheadas para eliminar el LAG de la UI
+@st.cache_data(ttl=300, show_spinner=False)
 def get_zonas() -> list[tuple]:
     try:
         with engine.connect() as c: return [(r[0], r[1], r[2]) for r in c.execute(text("SELECT nombre, lat, lon FROM cat_zonas ORDER BY nombre")).fetchall()]
     except: return list(DEFAULT_ZONAS)
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_cat(tabla: str) -> list[str]:
     try:
         with engine.connect() as c: return [r[0] for r in c.execute(text(f"SELECT nombre FROM {tabla} ORDER BY nombre")).fetchall()]
     except: return []
 
+@st.cache_data(ttl=300, show_spinner=False)
 def get_causas_con_flag() -> dict:
     try:
         with engine.connect() as c: return {r[0]: r[1] for r in c.execute(text("SELECT nombre, es_externa FROM cat_causas ORDER BY nombre")).fetchall()}
     except: return {}
 
+# Función para limpiar el caché cuando el Admin agrega nuevas zonas o equipos
+def clear_catalog_cache():
+    get_zonas.clear()
+    get_cat.clear()
+    get_causas_con_flag.clear()
+
 # =====================================================================
-# CONEXIÓN SMARTOLT (Corrección X-Token y Manejo JSON)
+# CONEXIÓN SMARTOLT 
 # =====================================================================
 @st.cache_data(ttl=3600, show_spinner=False)
 def fetch_smartolt_clients() -> dict:
@@ -135,40 +142,24 @@ def fetch_smartolt_clients() -> dict:
         base_url = st.secrets.get("smartolt_api_url", "").rstrip("/")
         api_key  = st.secrets.get("smartolt_api_key", "")
         
-        if not base_url or not api_key:
-            return {"_error": "Faltan credenciales en st.secrets (smartolt_api_url / smartolt_api_key)"}
+        if not base_url or not api_key: return {"_error": "Faltan credenciales en st.secrets."}
 
-        # Corregido: SmartOLT utiliza X-Token, no Bearer
         headers = {"X-Token": api_key}
-        url = f"{base_url}/api/system/get_onus_status"
+        res = requests.get(f"{base_url}/api/system/get_onus_status", headers=headers, timeout=15)
         
-        res = requests.get(url, headers=headers, timeout=15)
-        
-        if res.status_code != 200:
-            return {"_error": f"Error HTTP {res.status_code}: Verifica la URL y la API Key."}
+        if res.status_code != 200: return {"_error": f"Error HTTP {res.status_code}: Verifica la URL y la API Key."}
             
-        try:
-            data = res.json()
-        except ValueError:
-            return {"_error": "SmartOLT no devolvió JSON. Asegúrate de que la URL termine en .com o .net sin añadir /api al final en st.secrets."}
-            
-        # Dependiendo del firmware, los datos vienen en 'response' o 'onus'
-        onus_list = []
-        if isinstance(data, dict):
-            onus_list = data.get("response", data.get("onus", data.get("data", [])))
-        elif isinstance(data, list):
-            onus_list = data
+        data = res.json()
+        onus_list = data.get("response", data.get("onus", data.get("data", []))) if isinstance(data, dict) else (data if isinstance(data, list) else [])
             
         resultado = {}
         for onu in onus_list:
             if isinstance(onu, dict):
-                # Agrupar por nombre de la OLT
                 olt_name = str(onu.get("olt_name", onu.get("olt", "OLT Desconocida"))).strip()
                 resultado[olt_name] = resultado.get(olt_name, 0) + 1
                 
         return resultado
-    except Exception as ex:
-        return {"_error": str(ex)}
+    except Exception as ex: return {"_error": str(ex)}
 
 def get_clientes_smartolt(zona: str, equipo: str) -> int | None:
     if equipo.upper() != "OLT": return None
@@ -177,8 +168,7 @@ def get_clientes_smartolt(zona: str, equipo: str) -> int | None:
 
     zona_lower = zona.lower()
     for olt_name, total in data.items():
-        if zona_lower in olt_name.lower() or olt_name.lower() in zona_lower:
-            return total
+        if zona_lower in olt_name.lower() or olt_name.lower() in zona_lower: return total
     return None
 
 def smartolt_status_badge() -> str:
@@ -243,10 +233,10 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
 
     base = {
         "global": {"sla": 100.0, "total_fallas": 0, "mtbf": h_tot, "db": 0.0, "mh": 0.0, "p1": 0},
-        "t1":     {"fallas": 0, "mttr": 0.0, "acd": 0.0, "clientes": 0},
-        "t2":     {"fallas": 0, "mttr": 0.0},
-        "t3":     {"fallas": 0, "clientes_est": 0},
-        "int":    {"fallas": 0, "mttr": 0.0},
+        "t1": {"fallas": 0, "mttr": 0.0, "acd": 0.0, "clientes": 0},
+        "t2": {"fallas": 0, "mttr": 0.0},
+        "t3": {"fallas": 0, "clientes_est": 0},
+        "int": {"fallas": 0, "mttr": 0.0}
     }
     if df.empty: return base
 
@@ -280,7 +270,8 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     if not df_t1.empty:
         base["t1"]["mttr"]     = float(df_t1['duracion_horas'].mean())
         base["t1"]["clientes"] = int(df_t1['clientes_afectados'].sum())
-        base["t1"]["acd"]      = float((df_t1['duracion_horas'] * df_t1['clientes_afectados']).sum() / base["t1"]["clientes"]) if base["t1"]["clientes"] > 0 else 0.0
+        total_hc = (df_t1['duracion_horas'] * df_t1['clientes_afectados']).sum()
+        base["t1"]["acd"] = float(total_hc / base["t1"]["clientes"]) if base["t1"]["clientes"] > 0 else 0.0
 
     if not df_exact.empty:
         s_cl  = df_exact['inicio_incidente'].clip(lower=rng_s)
@@ -322,7 +313,16 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     story += [Paragraph("MULTINET", s_title), Paragraph("Reporte Ejecutivo · Network Operations Center", s_sub), HRFlowable(width="100%", thickness=2, color=rl_colors.HexColor(COLOR_PRIMARY), spaceAfter=10), Paragraph(f"<b>Periodo:</b> {label_periodo}", s_period), Paragraph(f"<b>Generado:</b> {now_str} (hora El Salvador)", s_body), Spacer(1, 0.5*cm)]
 
     story.append(Paragraph("1. Métricas Operativas Principales", s_sec))
-    kpi_rows = [['Indicador', 'Valor', 'Descripción'], ['SLA Global (Disponibilidad)', f"{kpis['global']['sla']:.3f}%", 'Intervalos fusionados'], ['MTTR Real', f"{kpis['t1']['mttr']:.2f} hrs", 'Resolución promedio (clientes > 0)'], ['ACD Real', f"{kpis['t1']['acd']:.2f} hrs", 'Afectación promedio por usuario'], ['Impacto Acumulado', f"{kpis['global']['db']/24:.2f} días", 'Total horas caídas / 24'], ['Clientes Impactados', f"{kpis['t1']['clientes']:,}", 'Usuarios afectados (T1)'], ['MTBF (Estabilidad)', f"{kpis['global']['mtbf']:.1f} hrs", 'Tiempo medio entre fallas'], ['Fallas P1 Críticas', f"{kpis['global']['p1']}", '>12 h o >1000 clientes']]
+    kpi_rows = [
+        ['Indicador', 'Valor', 'Descripción'],
+        ['SLA Global (Disponibilidad)',   f"{kpis['global']['sla']:.3f}%",   'Intervalos fusionados'],
+        ['MTTR Real',                     f"{kpis['t1']['mttr']:.2f} horas",'Resolución promedio (clientes > 0)'],
+        ['ACD Real (Afectación)',         f"{kpis['t1']['acd']:.2f} horas", 'Percepción real del usuario'],
+        ['Impacto Acumulado',             f"{(kpis['global']['db']/24):.2f} días",'Horas totales caídas / 24'],
+        ['Clientes Impactados',           f"{kpis['t1']['clientes']:,}", 'Usuarios afectados (T1)'],
+        ['MTBF (Estabilidad)',            f"{kpis['global']['mtbf']:.1f} horas",'Tiempo medio entre fallas'],
+        ['Fallas P1 Críticas',            f"{kpis['global']['p1']}",          '>12 h o >1000 clientes'],
+    ]
     t = Table(kpi_rows, colWidths=[5.5*cm, 3*cm, 8.5*cm]); t.setStyle(tbl_style(rl_colors.HexColor(COLOR_SECONDARY))); story += [t, Spacer(1, 0.4*cm)]
 
     story.append(Paragraph("2. Salud de Datos / Pendientes", s_sec))
@@ -363,7 +363,7 @@ def do_login():
                     elif fa % 3 == 0: conn.execute(text("UPDATE users SET locked_until=:dt,failed_attempts=:f WHERE id=:id"), {"dt": now_sv + timedelta(minutes=5), "f": fa, "id": uid}); st.session_state.log_err = "⏳ Bloqueado 5 min."
                     else: conn.execute(text("UPDATE users SET failed_attempts=:f WHERE id=:id"), {"f": fa, "id": uid}); st.session_state.log_err = f"❌ Incorrecto. Intento {fa}/6."
             else: st.session_state.log_err = "❌ Usuario incorrecto."
-    except Exception as ex: st.session_state.log_err = f"Error de conexión DB."
+    except Exception as ex: st.session_state.log_err = f"Error de conexión DB: {ex}"
     st.session_state.log_u = ""; st.session_state.log_p = ""
 
 if not st.session_state.logged_in:
@@ -399,7 +399,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v24.1")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v25.0")
     st.caption(smartolt_status_badge())
     st.divider()
 
@@ -463,9 +463,9 @@ with tabs[0]:
     c1, c2, c3, c4, c5 = st.columns(5)
     c1.metric("SLA Global", f"{kpis['global']['sla']:.3f}%", delta=_delta('global','sla', fmt="{:+.3f}", suffix="%"), delta_color="normal", help="Disponibilidad total. Intervalos solapados fusionados — sin doble descuento.")
     c2.metric("Total Eventos", kpis['global']['total_fallas'], delta=_delta('global','total_fallas', fmt="{:+.0f}"), delta_color="inverse", help="Suma de todas las fallas externas registradas.")
-    c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} hrs", delta=_delta('global','mtbf', fmt="{:+.1f}", suffix="h"), delta_color="normal", help="Tiempo Medio Entre Fallas — con datos exactos.")
+    c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} horas", delta=_delta('global','mtbf', fmt="{:+.1f}", suffix="h"), delta_color="normal", help="Tiempo Medio Entre Fallas — con datos exactos.")
     c4.metric("Impacto Acumulado", f"{kpis['global']['db']/24:.2f} días", delta=_delta('global','db', divisor=24, fmt="{:+.2f}", suffix="d"), delta_color="inverse", help="Total de horas de caída / 24.")
-    c5.metric("Falla Mayor (Pico)", f"{kpis['global']['mh']:.1f} hrs", delta=_delta('global','mh', fmt="{:+.1f}", suffix="h"), delta_color="inverse", help="Duración del evento más largo del periodo.")
+    c5.metric("Falla Mayor (Pico)", f"{kpis['global']['mh']:.1f} horas", delta=_delta('global','mh', fmt="{:+.1f}", suffix="h"), delta_color="inverse", help="Duración del evento más largo del periodo.")
 
     st.divider()
     st.markdown("### 👥 Impacto Directo a Clientes (Datos Exactos)")
@@ -475,8 +475,8 @@ with tabs[0]:
     else:
         t1a, t1b, t1c, t1d = st.columns(4)
         t1a.metric("Fallas Completas", kpis['t1']['fallas'], delta=_delta('t1','fallas', fmt="{:+.0f}"), delta_color="inverse", help="Duración exacta + clientes > 0.")
-        t1b.metric("MTTR Real", f"{kpis['t1']['mttr']:.2f} hrs", delta=_delta('t1','mttr', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Tiempo promedio de resolución de fallas masivas.")
-        t1c.metric("ACD Real", f"{kpis['t1']['acd']:.2f} hrs", delta=_delta('t1','acd', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Afectación promedio percibida por cliente.")
+        t1b.metric("MTTR Real", f"{kpis['t1']['mttr']:.2f} horas", delta=_delta('t1','mttr', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Tiempo promedio de resolución de fallas masivas.")
+        t1c.metric("ACD Real", f"{kpis['t1']['acd']:.2f} horas", delta=_delta('t1','acd', fmt="{:+.2f}", suffix="h"), delta_color="inverse", help="Afectación promedio percibida por cliente.")
         t1d.metric("Clientes Afectados", f"{kpis['t1']['clientes']:,}", delta=_delta('t1','clientes', fmt="{:+.0f}"), delta_color="inverse", help="Suma total de usuarios con corte confirmado.")
 
     st.divider()
@@ -484,9 +484,9 @@ with tabs[0]:
     col_t2, col_t3, col_int = st.columns(3)
 
     for container, label, emoji_on, emoji_off, metric_a, val_a, help_a, metric_b, val_b, help_b in [
-        (col_t2, "Fallas de Red Pura", "🟡","🟢", "Eventos sin Clientes", kpis['t2']['fallas'], "Hora exacta, 0 clientes. Sí afectan SLA.", "MTTR Infraestructura", f"{kpis['t2']['mttr']:.2f} hrs", "Resolución de fallas aisladas."),
+        (col_t2, "Fallas de Red Pura", "🟡","🟢", "Eventos sin Clientes", kpis['t2']['fallas'], "Hora exacta, 0 clientes. Sí afectan SLA.", "MTTR Infraestructura", f"{kpis['t2']['mttr']:.2f} horas", "Resolución de fallas aisladas."),
         (col_t3, "Eventos Incompletos", "🔴","🟢", "Fallas Sin Tiempo", kpis['t3']['fallas'], "Sin hora de inicio o cierre. Excluidas del SLA.", "Clientes Estimados", f"{kpis['t3']['clientes_est']:,}", "Posibles afectados sin duración medible."),
-        (col_int, "Internas / Mantenimiento", "🔵","🟢", "Eventos Internos", kpis['int']['fallas'], "No impactan SLA externo.", "MTTR Interno", f"{kpis['int']['mttr']:.2f} hrs", "Tiempo de resolución interno."),
+        (col_int, "Internas / Mantenimiento", "🔵","🟢", "Eventos Internos", kpis['int']['fallas'], "No impactan SLA externo.", "MTTR Interno", f"{kpis['int']['mttr']:.2f} horas", "Tiempo de resolución interno."),
     ]:
         v = val_a if isinstance(val_a, int) else kpis['t3']['fallas']
         with container:
@@ -587,8 +587,6 @@ if role in ('admin', 'auditor') and len(tabs) > 1:
                     cl_f = st.number_input(f"👤 Clientes Afectados *(fuente: {source})*", min_value=0, value=d_cl, step=1, key=f"reg_cl_{fk}")
 
                 st.divider()
-                
-                # --- Control Dinámico de Tiempos fuera del Form ---
                 ct1, ct2 = st.columns(2)
                 with ct1:
                     fi = st.date_input("📅 Fecha de Inicio", key=f"reg_fi_{fk}")
@@ -741,22 +739,22 @@ if role == 'admin' and len(tabs) > 3:
             for z_nombre, z_lat, z_lon in get_zonas():
                 c_zn, c_zdel = st.columns([5, 1])
                 c_zn.text(f"📍 {z_nombre}  (Lat: {z_lat:.4f}, Lon: {z_lon:.4f})")
-                if c_zdel.button("🗑️", key=f"del_z_{z_nombre}"):
+                if c_zdel.button("🗑️ Eliminar", key=f"del_z_{z_nombre}"):
                     try:
                         with engine.begin() as conn: conn.execute(text("DELETE FROM cat_zonas WHERE nombre=:n"), {"n": z_nombre})
-                        st.rerun()
+                        clear_catalog_cache(); st.rerun()
                     except Exception as ex: st.error(str(ex))
             st.divider()
             with st.form("form_add_zona", clear_on_submit=True):
                 st.markdown("**➕ Agregar Nueva Zona**")
-                nz = st.text_input("Nombre del Nodo")
+                nz = st.text_input("Nombre del Nodo Principal")
                 cla, clo = st.columns(2)
                 nlat = cla.number_input("Latitud", value=13.6929, format="%.4f")
                 nlon = clo.number_input("Longitud", value=-89.2182, format="%.4f")
                 if st.form_submit_button("Agregar Zona") and nz:
                     try:
                         with engine.begin() as conn: conn.execute(text("INSERT INTO cat_zonas (nombre,lat,lon) VALUES (:n,:la,:lo)"), {"n": nz, "la": nlat, "lo": nlon})
-                        st.rerun()
+                        clear_catalog_cache(); st.rerun()
                     except: st.error("Error: Zona duplicada.")
 
         with t_equipos:
@@ -764,19 +762,19 @@ if role == 'admin' and len(tabs) > 3:
             for eq in get_cat("cat_equipos"):
                 c_en, c_edel = st.columns([5,1])
                 c_en.text(f"🖥️ {eq}")
-                if c_edel.button("🗑️", key=f"del_eq_{eq}"):
+                if c_edel.button("🗑️ Eliminar", key=f"del_eq_{eq}"):
                     try:
                         with engine.begin() as conn: conn.execute(text("DELETE FROM cat_equipos WHERE nombre=:n"), {"n": eq})
-                        st.rerun()
+                        clear_catalog_cache(); st.rerun()
                     except Exception as ex: st.error(str(ex))
             st.divider()
             with st.form("form_add_eq", clear_on_submit=True):
-                st.markdown("**➕ Agregar Equipo**")
-                ne = st.text_input("Nombre del dispositivo")
+                st.markdown("**➕ Agregar Nuevo Equipo**")
+                ne = st.text_input("Nombre del dispositivo/equipo")
                 if st.form_submit_button("Agregar Equipo") and ne:
                     try:
                         with engine.begin() as conn: conn.execute(text("INSERT INTO cat_equipos (nombre) VALUES (:n)"), {"n": ne})
-                        st.rerun()
+                        clear_catalog_cache(); st.rerun()
                     except: st.error("Error: Equipo duplicado.")
 
         with t_causas:
@@ -784,56 +782,58 @@ if role == 'admin' and len(tabs) > 3:
             for causa, ext in get_causas_con_flag().items():
                 c_cn, c_ct, c_cdel = st.columns([4,2,1])
                 c_cn.text(f"🛠️ {causa}")
-                c_ct.caption("Externa ⚡" if ext else "Interna 🔧")
-                if c_cdel.button("🗑️", key=f"del_ca_{causa}"):
+                c_ct.caption("Externa (Fuerza Mayor)" if ext else "Interna (NOC/Infraestructura)")
+                if c_cdel.button("🗑️ Eliminar", key=f"del_ca_{causa}"):
                     try:
                         with engine.begin() as conn: conn.execute(text("DELETE FROM cat_causas WHERE nombre=:n"), {"n": causa})
-                        st.rerun()
-                    except Exception as ex: st.error(str(ex))
+                        clear_catalog_cache(); st.rerun()
+                    except Exception as e: st.error(str(e))
             st.divider()
             with st.form("form_add_causa", clear_on_submit=True):
-                st.markdown("**➕ Agregar Causa**")
-                nc = st.text_input("Descripción de la causa")
-                nce = st.checkbox("¿Es factor Externo (Terceros, Clima, etc.)?")
+                st.markdown("**➕ Agregar Nueva Causa**")
+                nc  = st.text_input("Descripción de la causa")
+                nce = st.checkbox("¿Es un factor Externo (Terceros, Clima, etc)?")
                 if st.form_submit_button("Agregar Causa") and nc:
                     try:
                         with engine.begin() as conn: conn.execute(text("INSERT INTO cat_causas (nombre,es_externa) VALUES (:n,:e)"), {"n": nc, "e": nce})
-                        st.rerun()
+                        clear_catalog_cache(); st.rerun()
                     except: st.error("Error: Causa duplicada.")
 
         with t_usuarios:
-            st.markdown("#### Control de Accesos")
+            st.markdown("#### Control de Accesos y Auditoría")
             cu, clg = st.columns([1, 2], gap="large")
-
             with cu:
                 with st.form("form_u", clear_on_submit=True):
                     st.markdown("**Crear Usuario**")
-                    nu = st.text_input("Nombre de usuario")
-                    np_u = st.text_input("Contraseña", type="password")
-                    nrl = st.selectbox("Rol", ["viewer", "auditor", "admin"])
-                    npr = st.text_input("Pregunta de seguridad (opcional)")
-                    nrs = st.text_input("Respuesta")
-                    if st.form_submit_button("➕ Crear Cuenta") and nu and np_u:
+                    nu    = st.text_input("Usuario")
+                    np_u  = st.text_input("Contraseña", type="password")
+                    nrl   = st.selectbox("Rol Asignado", ["viewer", "auditor", "admin"])
+                    npr   = st.text_input("Pregunta de Seguridad (Opcional)")
+                    nrs   = st.text_input("Respuesta")
+                    if st.form_submit_button("Crear Cuenta") and nu and np_u:
                         try:
-                            with engine.begin() as conn: conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES (:u,:h,:r,:p,:rs)"), {"u": nu, "h": hash_pw(np_u), "r": nrl, "p": npr, "rs": nrs})
-                            st.toast("✅ Usuario creado exitosamente."); time.sleep(0.4); st.rerun()
+                            with engine.begin() as conn:
+                                conn.execute(text("INSERT INTO users (username,password_hash,role,pregunta,respuesta) VALUES (:u,:h,:r,:p,:rs)"), {"u": nu, "h": hash_pw(np_u), "r": nrl, "p": npr, "rs": nrs})
+                            st.toast("✅ Usuario creado exitosamente."); time.sleep(0.5); st.rerun()
                         except: st.toast("❌ Error: Nombre de usuario duplicado.", icon="❌")
 
             with clg:
                 try:
-                    with engine.connect() as conn: df_usrs = pd.read_sql(text("SELECT id,username,role,is_banned,failed_attempts FROM users"), conn)
+                    with engine.connect() as conn:
+                        df_usrs = pd.read_sql(text("SELECT id,username,role,is_banned,failed_attempts FROM users"), conn)
                     df_usrs.insert(0, "Sel", False)
                     ed_usrs = st.data_editor(
                         df_usrs,
-                        column_config={"Sel": st.column_config.CheckboxColumn("✔", default=False), "id": None, "username": "Usuario", "role": "Rol", "is_banned": "Baneado", "failed_attempts": "Intentos"},
+                        column_config={"Sel": st.column_config.CheckboxColumn("✔", default=False), "id": None, "username": "Usuario", "role": "Rol", "is_banned": "Baneado", "failed_attempts":"Intentos Fallidos"},
                         use_container_width=True, hide_index=True,
                     )
                     filas_del = ed_usrs[ed_usrs["Sel"] == True]
                     hay_cambios = not (df_usrs.drop(columns=['Sel']).reset_index(drop=True).equals(ed_usrs.drop(columns=['Sel']).reset_index(drop=True)))
 
                     u1c, u2c = st.columns(2)
-                    if not filas_del.empty and u1c.button("🗑️ Eliminar", use_container_width=True):
-                        if "Admin" in filas_del['username'].values: st.error("No se puede eliminar la cuenta Admin raíz.")
+                    if not filas_del.empty and u1c.button("🗑️ Eliminar Usuario", use_container_width=True):
+                        if "Admin" in filas_del['username'].values:
+                            st.error("No se puede eliminar la cuenta Admin raíz.")
                         else:
                             with engine.begin() as conn:
                                 for rid in filas_del['id']: conn.execute(text("DELETE FROM users WHERE id=:id"), {"id": int(rid)})
@@ -843,15 +843,17 @@ if role == 'admin' and len(tabs) > 3:
                         with engine.begin() as conn:
                             for i, er in ed_usrs.iterrows():
                                 orig = df_usrs.drop(columns=['Sel']).iloc[i]
-                                if not orig.equals(er.drop('Sel')): conn.execute(text("UPDATE users SET role=:r,is_banned=:b,failed_attempts=:f WHERE id=:id"), {"r": str(er['role']), "b": bool(er['is_banned']), "f": int(er['failed_attempts']), "id": int(er['id'])})
+                                if not orig.equals(er.drop('Sel')):
+                                    conn.execute(text("UPDATE users SET role=:r,is_banned=:b,failed_attempts=:f WHERE id=:id"), {"r": str(er['role']), "b": bool(er['is_banned']), "f": int(er['failed_attempts']), "id": int(er['id'])})
                         st.rerun()
-                except Exception as ex: st.error(str(ex))
+                except Exception as e: st.error(str(e))
 
             st.divider()
-            st.markdown("#### 📜 Audit Log del Sistema")
+            st.markdown("##### 📜 Registro del Sistema (Audit Log)")
             try:
-                with engine.connect() as conn: logs = pd.read_sql(text("SELECT timestamp AS Fecha, username AS Usuario, action AS Accion, details AS Detalles FROM audit_logs ORDER BY id DESC"), conn)
-                t_lp = max(1, math.ceil(len(logs) / 10))
+                with engine.connect() as conn:
+                    logs = pd.read_sql(text("SELECT timestamp AS Fecha, username AS Usuario, action AS Accion, details AS Detalles FROM audit_logs ORDER BY id DESC"), conn)
+                t_lp  = max(1, math.ceil(len(logs)/10))
                 p_log = st.number_input("Página de log", 1, t_lp, 1)
-                st.dataframe(logs.iloc[(p_log-1)*10 : p_log*10], use_container_width=True, hide_index=True)
-            except Exception as ex: st.warning(str(ex))
+                st.dataframe(logs.iloc[(p_log-1)*10: p_log*10], use_container_width=True, hide_index=True)
+            except Exception as e: st.warning(str(e))
