@@ -136,17 +136,25 @@ def get_causas_con_flag() -> dict:
 def clear_catalog_cache():
     get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear()
 
-def get_clientes_cmdb(zona: str, equipo: str) -> int:
-    if zona == "San Salvador (Central)": return 0
+# OPTIMIZACIÓN: CMDB a Memoria RAM (Respuesta de 0ms)
+@st.cache_data(ttl=300, show_spinner=False)
+def get_all_cmdb_nodos() -> dict:
     try:
         with engine.connect() as conn:
-            res = conn.execute(text("SELECT clientes FROM cmdb_nodos WHERE zona ILIKE :z AND equipo = :e ORDER BY id DESC LIMIT 1"), {"z": f"%{zona}%", "e": equipo}).fetchone()
-            if res: return res[0]
-    except: pass
+            res = conn.execute(text("SELECT zona, equipo, clientes FROM cmdb_nodos")).fetchall()
+            return {(str(r[0]).lower(), str(r[1]).lower()): r[2] for r in res}
+    except: return {}
+
+def get_clientes_cmdb(zona: str, equipo: str) -> int:
+    if zona == "San Salvador (Central)": return 0
+    cmdb = get_all_cmdb_nodos()
+    for (z, e), clientes in cmdb.items():
+        if z in zona.lower() and e == equipo.lower():
+            return clientes
     return 0
 
 # =====================================================================
-# CARGA Y ENRIQUECIMIENTO (CON SALVAVIDAS NaT)
+# CARGA Y ENRIQUECIMIENTO (Caché Avanzado)
 # =====================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(fecha_ini: date, fecha_fin: date, include_deleted: bool = False, zona_filtro: str = "Todas", serv_filtro: str = "Todos", seg_filtro: str = "Todos") -> pd.DataFrame:
@@ -164,6 +172,7 @@ def load_data_rango(fecha_ini: date, fecha_fin: date, include_deleted: bool = Fa
         with engine.connect() as conn: return pd.read_sql(text(q), conn, params={"s": s_date, "e": e_date})
     except: return pd.DataFrame()
 
+@st.cache_data(ttl=60, show_spinner=False) # Optimización: Evita recalcular pandas
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df.empty: return df
     df = df.copy()
@@ -416,7 +425,6 @@ if not st.session_state.logged_in:
         with st.container(border=True):
             st.markdown("<div style='text-align:center;padding:20px 0 10px 0;'><div style='font-size:46px;'>🔐</div><h2 style='margin:10px 0 4px;color:#fff;font-weight:700;'>Acceso NOC Central</h2></div>", unsafe_allow_html=True)
             
-            # VISIBILIDAD DE ERROR DE LOGIN (Dentro de la tarjeta)
             if st.session_state.log_err:
                 st.error(st.session_state.log_err, icon="⚠️")
                 st.session_state.log_err = ""
@@ -430,7 +438,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.4 (Clean Edition)")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v1.0")
     st.divider()
 
     anio_act = datetime.now(SV_TZ).year
@@ -450,13 +458,8 @@ with st.sidebar:
     srv_sel = st.selectbox("🌐 Servicio", ["Todos"] + get_cat("cat_servicios"))
     seg_sel = st.selectbox("🏢 Segmento", ["Todos"] + DEFAULT_CATEGORIAS)
 
+    # Optimización: Leemos la data en RAM, pero el procesamiento final (df_prev) se hace en el Dashboard.
     df_m = enriquecer(load_data_rango(fecha_ini, fecha_fin, False, z_sel, srv_sel, seg_sel))
-
-    p_m_idx = 12 if m_idx == 1 else m_idx - 1
-    p_a_sel = a_sel - 1 if m_idx == 1 else a_sel
-    p_fi    = date(p_a_sel, p_m_idx, 1)
-    p_ff    = date(p_a_sel, p_m_idx, calendar.monthrange(p_a_sel, p_m_idx)[1])
-    df_prev = enriquecer(load_data_rango(p_fi, p_ff, False, z_sel, srv_sel, seg_sel))
 
     st.divider()
     if not df_m.empty:
@@ -464,6 +467,13 @@ with st.sidebar:
 
     st.divider()
     if st.button("🚪 Cerrar Sesión", use_container_width=True): log_audit("LOGOUT", "Sesión cerrada."); st.session_state.clear(); st.rerun()
+
+    # Firma y Sello de Autor
+    st.markdown("""
+        <div style="margin-top: 50px; text-align: center; color: #666; font-size: 11px;">
+            💻 Engineered by<br><b>Luis Salvador Guzmán López</b>
+        </div>
+    """, unsafe_allow_html=True)
 
 # =====================================================================
 # PESTAÑAS POR ROL
@@ -489,6 +499,13 @@ with tabs[t_idx]:
     if df_m.empty: 
         st.success("🟢 Sin incidentes registrados en los filtros seleccionados. ¡La red está al 100%!")
     else:
+        # Optimizacion de Velocidad: Cargamos df_prev SOLO si vemos el Dashboard.
+        p_m_idx = 12 if m_idx == 1 else m_idx - 1
+        p_a_sel = a_sel - 1 if m_idx == 1 else a_sel
+        p_fi    = date(p_a_sel, p_m_idx, 1)
+        p_ff    = date(p_a_sel, p_m_idx, calendar.monthrange(p_a_sel, p_m_idx)[1])
+        df_prev = enriquecer(load_data_rango(p_fi, p_ff, False, z_sel, srv_sel, seg_sel))
+        
         kpis      = calc_kpis(df_m, fecha_ini, fecha_fin)
         kpis_prev = calc_kpis(df_prev, p_fi, p_ff) if not df_prev.empty else None
 
@@ -544,7 +561,7 @@ with tabs[t_idx]:
 
         st.divider()
         
-        # Función DRY (reutilizada)
+        # Función Reutilizable para Mapas (Regla DRY)
         dibujar_graficos(df_m)
 t_idx += 1
 
@@ -583,6 +600,7 @@ if role in ('admin', 'auditor'):
 
                 st.divider()
                 
+                # Reglas estrictas UX
                 if z_f == "San Salvador (Central)":
                     cl_f = 0; imp_pct = 0.0
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
@@ -625,7 +643,8 @@ if role in ('admin', 'auditor'):
                     dt_ini = datetime.combine(fi, hi_val)
                     dt_fin = datetime.combine(ff, hf_val)
                     if dt_fin > dt_ini:
-                        dur = round((dt_fin - dt_ini).total_seconds() / 3600, 2)
+                        # Escudo Anti-División por Cero (mínimo 0.01 horas)
+                        dur = max(0.01, round((dt_fin - dt_ini).total_seconds() / 3600, 2))
                         conocimiento = "Total"
 
                 st.write("")
@@ -664,6 +683,7 @@ if role in ('admin', 'auditor'):
 
                                 log_audit("INSERT", f"Falla ({estado_db}) en {z_f}")
                                 load_data_rango.clear()
+                                get_all_cmdb_nodos.clear() # Actualizamos el caché de clientes
                                 st.session_state.form_reset += 1
                                 st.session_state.flash_msg = "✅ Registro guardado exitosamente."
                                 st.session_state.flash_type = "success"
@@ -710,9 +730,9 @@ if role in ('admin', 'auditor'):
                         fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
                         
                         if fin_dt_val < ini_dt:
-                            st.error("❌ La fecha y hora de cierre no puede ser menor a la de inicio.")
+                            st.error("❌ La fecha/hora de cierre no puede ser menor a la de inicio.")
                         else:
-                            dur_h = round((fin_dt_val - ini_dt).total_seconds() / 3600, 2)
+                            dur_h = max(0.01, round((fin_dt_val - ini_dt).total_seconds() / 3600, 2))
                             with engine.begin() as conn:
                                 conn.execute(text("UPDATE incidents SET estado='Cerrado', fin_incidente=:f, duracion_horas=:d, conocimiento_tiempos='Total' WHERE id=:id"), {"f": fin_dt_val, "d": dur_h, "id": sel_t})
                             log_audit("CLOSE TICKET", f"Ticket ID {sel_t} cerrado exitosamente.")
@@ -723,7 +743,6 @@ if role in ('admin', 'auditor'):
 
         st.divider()
         st.markdown("#### Edición Avanzada (Tabla Masiva)")
-        # ADVERTENCIA DE PAGINACIÓN
         st.info("⚠️ **Importante:** Si editas registros en la tabla, asegúrate de hacer clic en 'Guardar Ediciones Manuales' antes de cambiar de página para no perder tus cambios.")
         
         papelera = st.toggle("🗑️ Explorar Papelera de Reciclaje")
@@ -786,7 +805,6 @@ if role in ('admin', 'auditor'):
                         st.rerun()
 
             if h_cam and cb2.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
-                # Validar que no haya fechas de inicio vacías (El Escudo NaT)
                 fechas_validas = True
                 for i, r in ed_df.iterrows():
                     if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
@@ -795,7 +813,7 @@ if role in ('admin', 'auditor'):
                             break
                 
                 if not fechas_validas:
-                    st.session_state.flash_msg = "❌ Error: La 'Fecha de Inicio' es obligatoria. No puede estar vacía."
+                    st.session_state.flash_msg = "❌ Error: La 'Fecha de Inicio' es obligatoria."
                     st.session_state.flash_type = "error"
                     st.rerun()
                 else:
@@ -806,17 +824,19 @@ if role in ('admin', 'auditor'):
                                     ini_dt = pd.to_datetime(r.get('inicio_incidente'))
                                     if pd.isnull(r.get('fin_incidente')):
                                         fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
+                                        est_u = "Abierto" # Escudo anti-zombie
                                     else:
                                         fin_dt = pd.to_datetime(r.get('fin_incidente'))
                                         fin_dt_sql = fin_dt
-                                        dur_u  = max(0, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
+                                        dur_u  = max(0.01, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
                                         con_u = "Total"
+                                        est_u = "Cerrado" # Escudo anti-zombie
                                 except: 
-                                    fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
+                                    fin_dt_sql = None; dur_u = 0; con_u = "Parcial"; est_u = "Abierto"
                                     
                                 conn.execute(text("""
                                     UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, estado=:est, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id
-                                """), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "est": r.get('estado','Cerrado'), "idi": ini_dt, "idf": fin_dt_sql, "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur_u, "con": con_u, "id": int(r['id'])})
+                                """), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "est": est_u, "idi": ini_dt, "idf": fin_dt_sql, "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur_u, "con": con_u, "id": int(r['id'])})
                     log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
                     load_data_rango.clear()
                     st.session_state.flash_msg = "💾 Cambios guardados correctamente."
@@ -849,7 +869,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         st.session_state.flash_msg = "🗑️ Zona eliminada."
                         st.rerun()
                     except Exception: 
-                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso por un incidente."
+                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso."
                         st.session_state.flash_type = "error"
                         st.rerun()
             st.divider()
@@ -908,7 +928,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         st.session_state.flash_msg = "🗑️ Causa eliminada."
                         st.rerun()
                     except Exception:
-                        st.session_state.flash_msg = "❌ Error: La causa está en uso por un incidente."
+                        st.session_state.flash_msg = "❌ Error: La causa está en uso."
                         st.session_state.flash_type = "error"
                         st.rerun()
             st.divider()
@@ -974,7 +994,6 @@ if role == 'admin' and len(tabs) > t_idx:
 
                     u1c, u2c = st.columns(2)
                     if not filas_del.empty and u1c.button("🗑️ Eliminar Usuario", use_container_width=True):
-                        # ESCUDO ANTI-SUICIDIO DIGITAL Y PROTECCIÓN DEL ADMIN
                         if "Admin" in filas_del['username'].values:
                             st.error("❌ No se puede eliminar la cuenta Admin raíz.")
                         elif st.session_state.username in filas_del['username'].values:
