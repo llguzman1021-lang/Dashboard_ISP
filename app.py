@@ -24,7 +24,6 @@ COLOR_TEAL      = '#29b09d'
 COLOR_DANGER    = '#ff2b2b'
 PALETA_CORP     = (COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER)
 
-# FIX BUGS OCULTOS: Uso de Tuplas (...) en lugar de Listas [...] para evitar errores de caché (Unhashable type)
 DEFAULT_ZONAS = (
     ("El Rosario", 13.4886, -89.0256), ("ARG", 13.4880, -89.3200), ("Tepezontes", 13.6214, -89.0125),
     ("La Libertad", 13.4883, -89.3200), ("El Tunco", 13.4930, -89.3830), ("Costa del Sol", 13.3039, -88.9450),
@@ -65,14 +64,20 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-# ── Inicialización SEGURA de sesión ──
-for _k, _v in [
-    ('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''),
-    ('log_u', ''), ('log_p', ''), ('flash_msg', ''), ('flash_type', ''),
-    ('log_err', ''),   # CLAVE PARA EVITAR EL ATTRIBUTE ERROR
-]:
-    if _k not in st.session_state:
-        st.session_state[_k] = _v
+# ── Inicialización SEGURA de sesión (Indentation Fix) ──
+sesion_keys = [
+    'form_reset', 'logged_in', 'role', 'username', 'log_u', 'log_p', 
+    'flash_msg', 'flash_type', 'log_err'
+]
+
+for k in sesion_keys:
+    if k not in st.session_state:
+        if k == 'logged_in':
+            st.session_state[k] = False
+        elif k == 'form_reset':
+            st.session_state[k] = 0
+        else:
+            st.session_state[k] = ''
 
 if st.session_state.flash_msg:
     if st.session_state.flash_type == 'error':
@@ -173,7 +178,7 @@ def get_clientes_cmdb(zona: str, equipo: str) -> int:
     return 0
 
 # =====================================================================
-# CARGA Y ENRIQUECIMIENTO (SIN CACHÉ PARA EVITAR BUGS DE PYARROW)
+# CARGA Y ENRIQUECIMIENTO
 # =====================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(
@@ -203,13 +208,12 @@ def load_data_rango(
     except:
         return pd.DataFrame()
 
-# 🚫 FIX CRÍTICO: NO usar @st.cache_data aquí. Evita el "NoneType tzinfo" y la desaparición de columnas.
+# 🚫 NO USAR @st.cache_data PARA EVITAR ERRORES DE ZONA HORARIA
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     
-    # Parseo de fechas extremadamente defensivo
     if 'inicio_incidente' in df.columns:
         df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], errors='coerce', utc=True)
         m_ini = df['inicio_incidente'].notnull()
@@ -220,7 +224,6 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
         m_fin = df['fin_incidente'].notnull()
         if m_fin.any(): df.loc[m_fin, 'fin_incidente'] = df.loc[m_fin, 'fin_incidente'].dt.tz_convert(SV_TZ)
 
-    # Uso de .get() por si PyArrow llegara a borrar la columna
     df['duracion_horas']     = pd.to_numeric(df.get('duracion_horas', 0), errors='coerce').fillna(0.0)
     df['clientes_afectados'] = pd.to_numeric(df.get('clientes_afectados', 0), errors='coerce').fillna(0).astype(int)
     causas_ext_map = get_causas_con_flag()
