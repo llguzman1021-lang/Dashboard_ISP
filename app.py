@@ -148,7 +148,7 @@ def get_clientes_cmdb(zona: str, equipo: str) -> dict:
     return {"clientes": 0, "fuente": "Manual"}
 
 # =====================================================================
-# CARGA Y ENRIQUECIMIENTO 
+# CARGA Y ENRIQUECIMIENTO (CON SALVAVIDAS NaT)
 # =====================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(fecha_ini: date, fecha_fin: date, include_deleted: bool = False, zona_filtro: str = "Todas", serv_filtro: str = "Todos", seg_filtro: str = "Todos") -> pd.DataFrame:
@@ -171,7 +171,11 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     
-    df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], utc=True).dt.tz_convert(SV_TZ)
+    # Salvavidas para fechas corruptas
+    df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], errors='coerce', utc=True)
+    m_ini_not_null = df['inicio_incidente'].notnull()
+    df.loc[m_ini_not_null, 'inicio_incidente'] = df.loc[m_ini_not_null, 'inicio_incidente'].dt.tz_convert(SV_TZ)
+
     df['fin_incidente'] = pd.to_datetime(df['fin_incidente'], errors='coerce', utc=True)
     m_not_null = df['fin_incidente'].notnull()
     df.loc[m_not_null, 'fin_incidente'] = df.loc[m_not_null, 'fin_incidente'].dt.tz_convert(SV_TZ)
@@ -193,7 +197,7 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =====================================================================
-# KPIs MATEMÁTICOS
+# KPIs MATEMÁTICOS (Anti-Doble Descuento y Zonas Geográficas)
 # =====================================================================
 def _merge_intervals(intervals: list) -> list:
     if not intervals: return []
@@ -222,7 +226,8 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
 
     base["abiertos"] = len(df[df['estado'] == 'Abierto'])
     
-    df_cerrados = df[df['estado'] == 'Cerrado']
+    # Filtramos dates corruptos (Salvavidas)
+    df_cerrados = df[(df['estado'] == 'Cerrado') & df['inicio_incidente'].notnull()]
     df_int = df_cerrados[df_cerrados['categoria'] == CAT_INTERNA]
     df_ext = df_cerrados[df_cerrados['categoria'] != CAT_INTERNA]
 
@@ -240,7 +245,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     base["t3"]["fallas"]       = len(df_t3)
     base["t3"]["clientes_est"] = int(df_t3['clientes_afectados'].sum())
 
-    df_exact = df_ext[df_ext['conocimiento_tiempos'] == 'Total']
+    df_exact = df_ext[(df_ext['conocimiento_tiempos'] == 'Total') & df_ext['fin_incidente'].notnull()]
     
     if not df_exact.empty:
         df_sla = df_exact[df_exact['causa_raiz'] != 'Mantenimiento Programado']
@@ -280,6 +285,56 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     base["global"]["sla"]  = max(0.0, min(100.0, (h_tot - t_down) / h_tot * 100)) if h_tot > 0 else 100.0
     base["global"]["mtbf"] = float((h_tot - t_down) / len(df_exact)) if len(df_exact) > 0 else float(h_tot)
     return base
+
+# =====================================================================
+# COMPONENTE REUTILIZABLE: GRÁFICOS (REGLA DRY)
+# =====================================================================
+def dibujar_graficos(df_m):
+    st.markdown("### 🗺️ Análisis Geográfico y Temporal")
+    zonas_coords = {z[0]: (z[1], z[2]) for z in get_zonas()}
+    df_map = df_m.copy()
+    df_map['lat'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[0])
+    df_map['lon'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
+    agg = (df_map.groupby(['zona_completa','lat','lon']).agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum')).reset_index())
+    agg['Clientes_sz'] = agg['Clientes'].clip(lower=1)
+    
+    fig_map = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona_completa", size="Clientes_sz", color="Horas", color_continuous_scale="Inferno", zoom=8.5, mapbox_style="carto-darkmatter", labels={"Clientes_sz": "Clientes"}, title="Impacto Geográfico por Nodo")
+    fig_map.update_layout(margin=dict(l=0,r=0,t=40,b=0), height=450)
+    st.plotly_chart(fig_map, use_container_width=True)
+
+    st.write("")
+    dias_map   = {0:'Lunes',1:'Martes',2:'Miércoles',3:'Jueves',4:'Viernes',5:'Sábado',6:'Domingo'}
+    dias_orden = list(dias_map.values())
+    df_heat = df_m[df_m['inicio_incidente'].notnull()].copy()
+    
+    if not df_heat.empty:
+        df_heat['Día']  = pd.Categorical(df_heat['inicio_incidente'].dt.dayofweek.map(dias_map), categories=dias_orden, ordered=True)
+        df_heat['Hora'] = df_heat['inicio_incidente'].dt.hour
+        df_hm = df_heat.groupby(['Día','Hora']).size().reset_index(name='Fallas')
+        
+        fig_hm = px.density_heatmap(df_hm, x='Hora', y='Día', z='Fallas', color_continuous_scale='Blues', nbinsx=24, title="Mapa de Calor (Concentración de Fallas por Hora)")
+        fig_hm.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=350)
+        st.plotly_chart(fig_hm, use_container_width=True)
+
+    st.write("")
+    st.divider()
+    st.markdown("### 📊 Responsabilidad y Causas Principales")
+    
+    c_pie, c_bar = st.columns(2)
+    with c_pie:
+        df_m['Tipo'] = df_m['es_externa'].map({True: 'Externa (Fuerza Mayor)', False: 'Interna (Infraestructura / NOC)'})
+        agg_r = df_m.groupby('Tipo').size().reset_index(name='Eventos')
+        fig_p = px.pie(agg_r, names='Tipo', values='Eventos', hole=0.5, color_discrete_sequence=[COLOR_TEAL, COLOR_DANGER], title="Tasa de Responsabilidad")
+        fig_p.update_traces(textinfo='percent', textposition='inside')
+        fig_p.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=400)
+        st.plotly_chart(fig_p, use_container_width=True)
+        
+    with c_bar:
+        dc = (df_m.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=True).tail(8))
+        fig_b = px.bar(dc, x='Alertas', y='causa_raiz', orientation='h', color_discrete_sequence=[COLOR_PRIMARY], text_auto='.0f', title="Top Causas Raíz")
+        fig_b.update_traces(textposition='outside')
+        fig_b.update_layout(margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=400, xaxis_title="", yaxis_title="")
+        st.plotly_chart(fig_b, use_container_width=True)
 
 # =====================================================================
 # AUDITORÍA Y REPORTES PDF
@@ -374,13 +429,11 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.2 (Stable UX)")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.3 (Stable)")
     st.divider()
 
-    # Cálculo dinámico del año actual para seleccionarlo por defecto
     anio_act = datetime.now(SV_TZ).year
     anios_list = sorted({anio_act+1, anio_act, anio_act-1, anio_act-2}, reverse=True)
-    # Busca la posición del año actual para que sea el defecto (index)
     idx_anio = anios_list.index(anio_act) if anio_act in anios_list else 0
 
     a_sel = st.selectbox("🗓️ Año", anios_list, index=idx_anio)
@@ -454,11 +507,11 @@ with tabs[t_idx]:
         st.caption("*Métricas globales calculadas excluyendo los Mantenimientos Programados.*")
 
         c1, c2, c3, c4, c5 = st.columns(5)
-        c1.metric("SLA Global", f"{kpis['global']['sla']:.3f}%", delta=_delta('global','sla', fmt="{:+.3f}", suffix="%"), delta_color="normal", help="Disponibilidad total. Intervalos solapados fusionados — sin doble descuento.")
-        c2.metric("Total Eventos", kpis['global']['total_fallas'], delta=_delta('global','total_fallas', fmt="{:+.0f}"), delta_color="inverse", help="Suma de todas las fallas externas cerradas.")
-        c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} horas", delta=_delta('global','mtbf', fmt="{:+.1f}", suffix="h"), delta_color="normal", help="Tiempo Medio Entre Fallas — con datos exactos.")
-        c4.metric("Impacto Acumulado", f"{kpis['global']['db']/24:.2f} días", delta=_delta('global','db', divisor=24, fmt="{:+.2f}", suffix="d"), delta_color="inverse", help="Total de horas de caída / 24.")
-        c5.metric("Falla Mayor (Pico)", f"{kpis['global']['mh']:.1f} horas", delta=_delta('global','mh', fmt="{:+.1f}", suffix="h"), delta_color="inverse", help="Duración del evento más largo del periodo.")
+        c1.metric("SLA Global", f"{kpis['global']['sla']:.3f}%", delta=_delta('global','sla', fmt="{:+.3f}", suffix="%"), delta_color="normal")
+        c2.metric("Total Eventos", kpis['global']['total_fallas'], delta=_delta('global','total_fallas', fmt="{:+.0f}"), delta_color="inverse")
+        c3.metric("MTBF (Estabilidad)", f"{kpis['global']['mtbf']:.1f} horas", delta=_delta('global','mtbf', fmt="{:+.1f}", suffix="h"), delta_color="normal")
+        c4.metric("Impacto Acumulado", f"{kpis['global']['db']/24:.2f} días", delta=_delta('global','db', divisor=24, fmt="{:+.2f}", suffix="d"), delta_color="inverse")
+        c5.metric("Falla Mayor (Pico)", f"{kpis['global']['mh']:.1f} horas", delta=_delta('global','mh', fmt="{:+.1f}", suffix="h"), delta_color="inverse")
 
         st.divider()
         
@@ -467,12 +520,9 @@ with tabs[t_idx]:
         st.caption("*Desglose de disponibilidad por cada nodo principal.*")
         
         zonas_activas = [z[0] for z in get_zonas()]
-        sla_data = []
-        for z in zonas_activas:
-            sla_val = kpis['zonas_sla'].get(z, 100.0)
-            sla_data.append({"Zona": z, "SLA (%)": sla_val})
-
+        sla_data = [{"Zona": z, "SLA (%)": kpis['zonas_sla'].get(z, 100.0)} for z in zonas_activas]
         df_sla_geo = pd.DataFrame(sla_data).sort_values("SLA (%)", ascending=True)
+        
         fig_sla = px.bar(df_sla_geo, x="SLA (%)", y="Zona", orientation='h', text_auto='.3f', color="SLA (%)", color_continuous_scale=["#ff2b2b", "#ff9f43", "#29b09d"], title="Ranking de Estabilidad Geográfica")
         fig_sla.update_layout(xaxis=dict(range=[max(0, df_sla_geo["SLA (%)"].min()-2), 100.5]), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=350)
         st.plotly_chart(fig_sla, use_container_width=True)
@@ -493,50 +543,8 @@ with tabs[t_idx]:
 
         st.divider()
         
-        # ── GRÁFICOS ──
-        st.markdown("### 🗺️ Análisis Geográfico y Temporal")
-        zonas_coords = {z[0]: (z[1], z[2]) for z in get_zonas()}
-        df_map = df_m.copy()
-        df_map['lat'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[0])
-        df_map['lon'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
-        agg = (df_map.groupby(['zona_completa','lat','lon']).agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum')).reset_index())
-        agg['Clientes_sz'] = agg['Clientes'].clip(lower=1)
-        
-        fig_map = px.scatter_mapbox(agg, lat="lat", lon="lon", hover_name="zona_completa", size="Clientes_sz", color="Horas", color_continuous_scale="Inferno", zoom=8.5, mapbox_style="carto-darkmatter", labels={"Clientes_sz": "Clientes"}, title="Impacto Geográfico por Nodo")
-        fig_map.update_layout(margin=dict(l=0,r=0,t=40,b=0), height=450)
-        st.plotly_chart(fig_map, use_container_width=True)
-
-        st.write("")
-        dias_map   = {0:'Lunes',1:'Martes',2:'Miércoles',3:'Jueves',4:'Viernes',5:'Sábado',6:'Domingo'}
-        dias_orden = list(dias_map.values())
-        df_heat = df_m.copy()
-        df_heat['Día']  = pd.Categorical(df_heat['inicio_incidente'].dt.dayofweek.map(dias_map), categories=dias_orden, ordered=True)
-        df_heat['Hora'] = df_heat['inicio_incidente'].dt.hour
-        df_hm = df_heat.groupby(['Día','Hora']).size().reset_index(name='Fallas')
-        
-        fig_hm = px.density_heatmap(df_hm, x='Hora', y='Día', z='Fallas', color_continuous_scale='Blues', nbinsx=24, title="Mapa de Calor (Concentración de Fallas por Hora)")
-        fig_hm.update_layout(xaxis=dict(tickmode='linear', tick0=0, dtick=1), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=350)
-        st.plotly_chart(fig_hm, use_container_width=True)
-
-        st.write("")
-        st.divider()
-        st.markdown("### 📊 Responsabilidad y Causas Principales")
-        
-        c_pie, c_bar = st.columns(2)
-        with c_pie:
-            df_m['Tipo'] = df_m['es_externa'].map({True: 'Externa (Fuerza Mayor)', False: 'Interna (Infraestructura / NOC)'})
-            agg_r = df_m.groupby('Tipo').size().reset_index(name='Eventos')
-            fig_p = px.pie(agg_r, names='Tipo', values='Eventos', hole=0.5, color_discrete_sequence=[COLOR_TEAL, COLOR_DANGER], title="Tasa de Responsabilidad")
-            fig_p.update_traces(textinfo='percent', textposition='inside')
-            fig_p.update_layout(showlegend=True, legend=dict(orientation="h", yanchor="top", y=-0.1, xanchor="center", x=0.5), margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=400)
-            st.plotly_chart(fig_p, use_container_width=True)
-            
-        with c_bar:
-            dc = (df_m.groupby('causa_raiz').size().reset_index(name='Alertas').sort_values('Alertas', ascending=True).tail(8))
-            fig_b = px.bar(dc, x='Alertas', y='causa_raiz', orientation='h', color_discrete_sequence=[COLOR_PRIMARY], text_auto='.0f', title="Top Causas Raíz")
-            fig_b.update_traces(textposition='outside')
-            fig_b.update_layout(margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=400, xaxis_title="", yaxis_title="")
-            st.plotly_chart(fig_b, use_container_width=True)
+        # Llama a la función reutilizable en lugar de tener 60 líneas repetidas
+        dibujar_graficos(df_m)
 t_idx += 1
 
 # ─────────────────────────────────────────────
@@ -577,22 +585,19 @@ if role in ('admin', 'auditor'):
                 
                 # Reglas estrictas UX
                 if z_f == "San Salvador (Central)":
-                    cl_f = 0
-                    imp_pct = 0.0
+                    cl_f = 0; imp_pct = 0.0
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
                     st.warning("⚠️ Centro de Datos: Equipos Core. No aplica conteo de ONTs.")
                 elif cat_f == "Cliente Corporativo":
-                    cl_f = 1
-                    imp_pct = 0.0
+                    cl_f = 1; imp_pct = 0.0
                     st.number_input("👤 Clientes Afectados", value=1, disabled=True, key=f"cl_{fk}")
                     st.caption("🏢 Corporativo: fijado en 1 enlace.")
                 elif cat_f == CAT_INTERNA:
-                    cl_f = 0
-                    imp_pct = 0.0
+                    cl_f = 0; imp_pct = 0.0
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
                     st.caption("🔧 Interna: fijado en 0 clientes.")
                 else:
-                    cl_f = st.number_input(f"👤 Clientes Afectados *(sugerencia basada en histórico: {d_cl})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
+                    cl_f = st.number_input(f"👤 Clientes Afectados *(sugerencia histórica: {d_cl})*", min_value=0, value=d_cl, step=1, key=f"cl_{fk}")
                     imp_pct = round((cl_f / d_cl) * 100, 2) if d_cl > 0 else 0.0
 
                 st.divider()
@@ -602,25 +607,21 @@ if role in ('admin', 'auditor'):
                 ct1, ct2 = st.columns(2)
                 with ct1:
                     fi  = st.date_input("📅 Fecha de Inicio", key=f"fi_{fk}")
-                    # NUEVA LÓGICA DE UX PARA LA HORA:
                     hi_on = st.checkbox("🕒 Conozco la hora exacta de inicio", value=False, key=f"hi_on_{fk}")
                     if hi_on: hi_val = st.time_input("Hora Exacta de Inicio", key=f"hi_val_{fk}")
                     else: hi_val = None; st.info("ℹ️ Sin hora exacta → Evento Incompleto.")
                 
                 with ct2:
                     if es_abierto:
-                        ff = fi
-                        hf_val = None
-                        hf_on = False
-                        st.warning("🚨 El ticket se guardará como 'Falla en Curso'. Podrás cerrarlo luego desde el Historial.")
+                        ff = fi; hf_val = None; hf_on = False
+                        st.warning("🚨 El ticket se guardará como 'Falla en Curso'.")
                     else:
                         ff  = st.date_input("📅 Fecha de Cierre", key=f"ff_{fk}")
                         hf_on = st.checkbox("🕒 Conozco la hora exacta de cierre", value=False, key=f"hf_on_{fk}")
                         if hf_on: hf_val = st.time_input("Hora Exacta de Cierre", key=f"hf_val_{fk}")
                         else: hf_val = None; st.info("ℹ️ Sin hora exacta → Evento Incompleto.")
 
-                dur = 0.0
-                conocimiento = "Parcial"
+                dur = 0.0; conocimiento = "Parcial"
                 if hi_on and hf_on and (not es_abierto):
                     dt_ini = datetime.combine(fi, hi_val)
                     dt_fin = datetime.combine(ff, hf_val)
@@ -710,7 +711,7 @@ if role in ('admin', 'auditor'):
                         fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
                         
                         if fin_dt_val < ini_dt:
-                            st.error("❌ La fecha y hora de cierre no puede ser menor a la de inicio.")
+                            st.error("❌ La fecha/hora de cierre no puede ser menor a la de inicio.")
                         else:
                             dur_h = round((fin_dt_val - ini_dt).total_seconds() / 3600, 2)
                             with engine.begin() as conn:
@@ -833,7 +834,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         st.session_state.flash_msg = "🗑️ Zona eliminada."
                         st.rerun()
                     except Exception: 
-                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso por un incidente."
+                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso."
                         st.session_state.flash_type = "error"
                         st.rerun()
             st.divider()
@@ -892,7 +893,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         st.session_state.flash_msg = "🗑️ Causa eliminada."
                         st.rerun()
                     except Exception:
-                        st.session_state.flash_msg = "❌ Error: La causa está en uso por un incidente."
+                        st.session_state.flash_msg = "❌ Error: La causa está en uso."
                         st.session_state.flash_type = "error"
                         st.rerun()
             st.divider()
@@ -924,7 +925,6 @@ if role == 'admin' and len(tabs) > t_idx:
                             st.session_state.flash_msg = "✅ Usuario creado exitosamente."
                             st.rerun()
                         except Exception as e:
-                            # Filtro estricto para mostrar "Duplicado" o un error de base de datos
                             if "unique constraint" in str(e).lower() or "duplicate key" in str(e).lower():
                                 st.toast("❌ Error: Ese nombre de usuario ya existe.", icon="❌")
                             else:
