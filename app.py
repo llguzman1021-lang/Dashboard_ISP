@@ -24,6 +24,7 @@ COLOR_TEAL      = '#29b09d'
 COLOR_DANGER    = '#ff2b2b'
 PALETA_CORP     = (COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER)
 
+# Constantes inmutables (Tuplas) para evitar errores de caché en Streamlit
 DEFAULT_ZONAS = (
     ("El Rosario", 13.4886, -89.0256), ("ARG", 13.4880, -89.3200), ("Tepezontes", 13.6214, -89.0125),
     ("La Libertad", 13.4883, -89.3200), ("El Tunco", 13.4930, -89.3830), ("Costa del Sol", 13.3039, -88.9450),
@@ -205,7 +206,6 @@ def load_data_rango(
     except:
         return pd.DataFrame()
 
-# 🚫 NO USAR CACHÉ AQUÍ PARA EVITAR LA DESAPARICIÓN DE COLUMNAS
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
@@ -265,32 +265,32 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     }
     if df.empty: return base
 
-    base["abiertos"] = len(df[df['estado'] == 'Abierto'])
+    base["abiertos"] = len(df[df.get('estado') == 'Abierto'])
 
-    df_cerrados = df[(df['estado'] == 'Cerrado') & df['inicio_incidente'].notnull()]
-    df_int      = df_cerrados[df_cerrados['categoria'] == CAT_INTERNA]
-    df_ext      = df_cerrados[df_cerrados['categoria'] != CAT_INTERNA]
+    df_cerrados = df[(df.get('estado') == 'Cerrado') & df.get('inicio_incidente').notnull()]
+    df_int      = df_cerrados[df_cerrados.get('categoria') == CAT_INTERNA]
+    df_ext      = df_cerrados[df_cerrados.get('categoria') != CAT_INTERNA]
 
     base["int"]["fallas"] = len(df_int)
     if not df_int.empty:
-        iv = df_int[df_int['duracion_horas'] > 0]
-        base["int"]["mttr"] = float(iv['duracion_horas'].mean()) if not iv.empty else 0.0
+        iv = df_int[df_int.get('duracion_horas') > 0]
+        base["int"]["mttr"] = float(iv.get('duracion_horas').mean()) if not iv.empty else 0.0
 
     if df_ext.empty: return base
 
     base["global"]["total_fallas"] = len(df_ext)
-    base["global"]["p1"]           = int((df_ext['Severidad'] == '🔴 P1 (Crítica)').sum())
+    base["global"]["p1"]           = int((df_ext.get('Severidad') == '🔴 P1 (Crítica)').sum())
 
-    df_t3 = df_ext[df_ext['conocimiento_tiempos'] != 'Total']
+    df_t3 = df_ext[df_ext.get('conocimiento_tiempos') != 'Total']
     base["t3"]["fallas"]       = len(df_t3)
-    base["t3"]["clientes_est"] = int(df_t3['clientes_afectados'].sum())
+    base["t3"]["clientes_est"] = int(df_t3.get('clientes_afectados').sum())
 
-    df_exact = df_ext[(df_ext['conocimiento_tiempos'] == 'Total') & df_ext['fin_incidente'].notnull()]
+    df_exact = df_ext[(df_ext.get('conocimiento_tiempos') == 'Total') & df_ext.get('fin_incidente').notnull()]
 
     if not df_exact.empty:
-        df_sla = df_exact[df_exact['causa_raiz'] != 'Mantenimiento Programado']
-        for z in df_sla['zona'].unique():
-            df_z    = df_sla[df_sla['zona'] == z]
+        df_sla = df_exact[df_exact.get('causa_raiz') != 'Mantenimiento Programado']
+        for z in df_sla.get('zona').unique():
+            df_z    = df_sla[df_sla.get('zona') == z]
             s_cl_z  = df_z['inicio_incidente'].clip(lower=rng_s)
             e_cl_z  = df_z['fin_incidente'].clip(upper=rng_e)
             valid_z = (s_cl_z <= e_cl_z)
@@ -298,23 +298,23 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
             t_down_z = sum((e - s).total_seconds() for s, e in _merge_intervals(ivs_z)) / 3600.0
             base["zonas_sla"][z] = max(0.0, min(100.0, (h_tot - t_down_z) / h_tot * 100))
 
-        base["global"]["db"] = float(df_exact['duracion_horas'].sum())
-        base["global"]["mh"] = float(df_exact['duracion_horas'].max())
+        base["global"]["db"] = float(df_exact.get('duracion_horas').sum())
+        base["global"]["mh"] = float(df_exact.get('duracion_horas').max())
 
-    df_t2 = df_exact[df_exact['clientes_afectados'] == 0]
+    df_t2 = df_exact[df_exact.get('clientes_afectados') == 0]
     base["t2"]["fallas"] = len(df_t2)
-    if not df_t2.empty: base["t2"]["mttr"] = float(df_t2['duracion_horas'].mean())
+    if not df_t2.empty: base["t2"]["mttr"] = float(df_t2.get('duracion_horas').mean())
 
-    df_t1 = df_exact[df_exact['clientes_afectados'] > 0]
+    df_t1 = df_exact[df_exact.get('clientes_afectados') > 0]
     base["t1"]["fallas"] = len(df_t1)
     if not df_t1.empty:
-        base["t1"]["mttr"]     = float(df_t1['duracion_horas'].mean())
-        base["t1"]["clientes"] = int(df_t1['clientes_afectados'].sum())
-        total_hc = (df_t1['duracion_horas'] * df_t1['clientes_afectados']).sum()
+        base["t1"]["mttr"]     = float(df_t1.get('duracion_horas').mean())
+        base["t1"]["clientes"] = int(df_t1.get('clientes_afectados').sum())
+        total_hc = (df_t1.get('duracion_horas') * df_t1.get('clientes_afectados')).sum()
         base["t1"]["acd"] = float(total_hc / base["t1"]["clientes"]) if base["t1"]["clientes"] > 0 else 0.0
 
     if not df_exact.empty:
-        df_sla_global = df_exact[df_exact['causa_raiz'] != 'Mantenimiento Programado']
+        df_sla_global = df_exact[df_exact.get('causa_raiz') != 'Mantenimiento Programado']
         s_cl  = df_sla_global['inicio_incidente'].clip(lower=rng_s)
         e_cl  = df_sla_global['fin_incidente'].clip(upper=rng_e)
         valid = (s_cl <= e_cl)
@@ -336,13 +336,13 @@ def dibujar_graficos(df_m: pd.DataFrame):
     st.markdown("### 🗺️ Análisis Geográfico y Temporal")
     zonas_coords = {z[0]: (z[1], z[2]) for z in get_zonas()}
     df_map = df_m.copy()
-    df_map['lat'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[0])
-    df_map['lon'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
+    df_map['lat'] = df_map.get('zona').map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[0])
+    df_map['lon'] = df_map.get('zona').map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
     
     agg = (df_map.groupby(['zona_completa','lat','lon'])
            .agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum'))
            .reset_index())
-    agg['Clientes_sz'] = agg['Clientes'].clip(lower=1)
+    agg['Clientes_sz'] = agg.get('Clientes').clip(lower=1)
 
     fig_map = px.scatter_mapbox(
         agg, lat="lat", lon="lon", hover_name="zona_completa",
@@ -356,7 +356,7 @@ def dibujar_graficos(df_m: pd.DataFrame):
     st.write("")
     dias_map   = {0:'Lunes',1:'Martes',2:'Miércoles',3:'Jueves',4:'Viernes',5:'Sábado',6:'Domingo'}
     dias_orden = list(dias_map.values())
-    df_heat = df_m[df_m['inicio_incidente'].notnull()].copy()
+    df_heat = df_m[df_m.get('inicio_incidente').notnull()].copy()
 
     if not df_heat.empty:
         df_heat['Día']  = pd.Categorical(
@@ -383,7 +383,7 @@ def dibujar_graficos(df_m: pd.DataFrame):
 
     c_pie, c_bar = st.columns(2)
     with c_pie:
-        df_m['Tipo'] = df_m['es_externa'].map({True: 'Externa (Fuerza Mayor)', False: 'Interna (Infraestructura / NOC)'})
+        df_m['Tipo'] = df_m.get('es_externa').map({True: 'Externa (Fuerza Mayor)', False: 'Interna (Infraestructura / NOC)'})
         agg_r = df_m.groupby('Tipo').size().reset_index(name='Eventos')
         fig_p = px.pie(
             agg_r, names='Tipo', values='Eventos', hole=0.5,
@@ -583,9 +583,6 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    # 🌟 LETRERO DE VERIFICACIÓN VISUAL 🌟
-    st.success("✅ VERSIÓN 7.0 (BLINDADA)")
-    
     st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v1.0")
     st.divider()
 
@@ -895,7 +892,7 @@ if role in ('admin', 'auditor'):
         st.markdown("### 🗂️ Historial, Auditoría y Edición")
 
         # ── CIERRE RÁPIDO DE TICKETS ──
-        df_abiertos = df_m[df_m['estado'] == 'Abierto']
+        df_abiertos = df_m[df_m.get('estado') == 'Abierto']
         if not df_abiertos.empty:
             st.warning("🚨 Tienes fallas en curso. Puedes cerrarlas rápidamente aquí:")
             with st.expander("Cerrar Falla en Curso (Ticket Abierto)", expanded=True):
@@ -907,7 +904,7 @@ if role in ('admin', 'auditor'):
                             return 'Sin hora'
 
                     t_opts = {
-                        r['id']: f"ID: {r['id']} | Nodo: {r['zona_completa']} | Inicio: {_fmt_inicio(r['inicio_incidente'])}"
+                        r['id']: f"ID: {r['id']} | Nodo: {r.get('zona_completa')} | Inicio: {_fmt_inicio(r.get('inicio_incidente'))}"
                         for _, r in df_abiertos.iterrows()
                     }
                     sel_t  = st.selectbox("Selecciona la Falla a Cerrar", options=list(t_opts.keys()), format_func=lambda x: t_opts[x])
@@ -917,7 +914,7 @@ if role in ('admin', 'auditor'):
 
                     if st.form_submit_button("Cerrar Ticket", type="primary"):
                         r_orig     = df_abiertos[df_abiertos['id'] == sel_t].iloc[0]
-                        ini_dt     = r_orig['inicio_incidente']
+                        ini_dt     = r_orig.get('inicio_incidente')
                         fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
 
                         if pd.isnull(ini_dt):
@@ -959,9 +956,8 @@ if role in ('admin', 'auditor'):
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_page.insert(0, "Sel", False)
 
-            # 🛡️ PROTECCIÓN ANTI-CACHÉ ABSOLUTA
-            drop_cols = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje']
-                         if c in df_page.columns]
+            # 🛡️ PROTOCOLO "ERRORS IGNORE": Nunca colapsará por columnas perdidas
+            drop_cols = ['deleted_at', 'Severidad', 'zona_completa', 'es_externa', 'impacto_porcentaje']
 
             ed_df = st.data_editor(
                 df_page.drop(columns=drop_cols, errors='ignore'),
@@ -973,20 +969,21 @@ if role in ('admin', 'auditor'):
                     "fin_incidente":    st.column_config.DatetimeColumn("Fin",    format="YYYY-MM-DD HH:mm"),
                 },
                 use_container_width=True, hide_index=True,
-                key="editor_incidentes_v8_seguro"
+                key="editor_incidentes_v9_blindado"
             )
 
             f_sel  = ed_df[ed_df["Sel"] == True]
             
-            cols_to_drop_ref = [c for c in drop_cols + ['Sel'] if c in df_page.columns]
-            ref_df = df_page.drop(columns=cols_to_drop_ref).reset_index(drop=True)
+            # Limpieza segura para el comparador de cambios
+            cols_to_drop_ref = drop_cols + ['Sel']
+            ref_df = df_page.drop(columns=cols_to_drop_ref, errors='ignore').reset_index(drop=True)
 
             def strip_tz(s):
                 if pd.api.types.is_datetime64_any_dtype(s):
                     return s.dt.tz_convert(None) if (hasattr(s.dt,'tz') and s.dt.tz) else s
                 return s
 
-            ed_cmp  = ed_df.drop(columns=['Sel']).copy().apply(strip_tz)
+            ed_cmp  = ed_df.drop(columns=['Sel'], errors='ignore').copy().apply(strip_tz)
             ref_cmp = ref_df.copy().apply(strip_tz)
             h_cam   = not ref_cmp.equals(ed_cmp)
 
@@ -1017,7 +1014,7 @@ if role in ('admin', 'auditor'):
             if h_cam and cb2.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
                 fechas_validas = True
                 for i, r in ed_df.iterrows():
-                    if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
+                    if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel', errors='ignore'))):
                         if pd.isnull(r.get('inicio_incidente')):
                             fechas_validas = False
                             break
@@ -1029,7 +1026,7 @@ if role in ('admin', 'auditor'):
                 else:
                     with engine.begin() as conn:
                         for i, r in ed_df.iterrows():
-                            if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
+                            if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel', errors='ignore'))):
                                 try:
                                     ini_dt = pd.to_datetime(r.get('inicio_incidente'))
                                     if pd.isnull(r.get('fin_incidente')):
@@ -1061,7 +1058,7 @@ if role in ('admin', 'auditor'):
                                        "idi": ini_dt, "idf": fin_dt_sql,
                                        "cl": cl_val,
                                        "cr": str(r.get('causa_raiz','')), "d": str(r.get('descripcion','')),
-                                       "dur": dur_u, "con": con_u, "id": int(r['id'])})
+                                       "dur": dur_u, "con": con_u, "id": int(r.get('id'))})
 
                     log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
                     load_data_rango.clear()
@@ -1070,10 +1067,11 @@ if role in ('admin', 'auditor'):
                     st.rerun()
 
             st.divider()
-            cols_to_drop_csv = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje'] if c in df_d.columns]
+            
+            # 🛡️ PROTECCIÓN FINAL: CSV no colapsa aunque le falten todas las columnas del mundo
             st.download_button(
                 "📥 Descargar CSV de esta Tabla",
-                df_d.drop(columns=cols_to_drop_csv).to_csv(index=False).encode(),
+                df_d.drop(columns=drop_cols, errors='ignore').to_csv(index=False).encode(),
                 f"NOC_Export_{fecha_ini}_{fecha_fin}.csv", "text/csv",
                 use_container_width=True
             )
@@ -1245,11 +1243,11 @@ if role == 'admin' and len(tabs) > t_idx:
                             "failed_attempts": "Intentos Fallidos",
                         },
                         use_container_width=True, hide_index=True,
-                        key="editor_usuarios_final_v8"
+                        key="editor_usuarios_v9_blindaje_maximo"
                     )
                     filas_del   = ed_usrs[ed_usrs["Sel"] == True]
-                    hay_cambios = not (df_usrs.drop(columns=['Sel']).reset_index(drop=True)
-                                       .equals(ed_usrs.drop(columns=['Sel']).reset_index(drop=True)))
+                    hay_cambios = not (df_usrs.drop(columns=['Sel'], errors='ignore').reset_index(drop=True)
+                                       .equals(ed_usrs.drop(columns=['Sel'], errors='ignore').reset_index(drop=True)))
 
                     u1c, u2c = st.columns(2)
                     if not filas_del.empty and u1c.button("🗑️ Eliminar Usuario", use_container_width=True):
@@ -1269,12 +1267,12 @@ if role == 'admin' and len(tabs) > t_idx:
                     if hay_cambios and u2c.button("💾 Guardar Permisos", type="primary", use_container_width=True):
                         with engine.begin() as conn:
                             for i, er in ed_usrs.iterrows():
-                                orig = df_usrs.drop(columns=['Sel']).iloc[i]
-                                if not orig.equals(er.drop('Sel')):
+                                orig = df_usrs.drop(columns=['Sel'], errors='ignore').iloc[i]
+                                if not orig.equals(er.drop('Sel', errors='ignore')):
                                     conn.execute(
                                         text("UPDATE users SET role=:r,is_banned=:b,failed_attempts=:f WHERE id=:id"),
-                                        {"r": str(er['role']), "b": bool(er['is_banned']),
-                                         "f": int(er['failed_attempts']), "id": int(er['id'])}
+                                        {"r": str(er.get('role', 'viewer')), "b": bool(er.get('is_banned', False)),
+                                         "f": int(er.get('failed_attempts', 0)), "id": int(er.get('id'))}
                                     )
                         st.session_state.flash_msg = "💾 Permisos de usuario guardados."
                         st.rerun()
