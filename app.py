@@ -68,10 +68,8 @@ for _k, _v in [('form_reset', 0), ('logged_in', False), ('role', ''), ('username
     if _k not in st.session_state: st.session_state[_k] = _v
 
 if st.session_state.flash_msg:
-    if st.session_state.flash_type == 'error':
-        st.error(st.session_state.flash_msg, icon="❌")
-    else:
-        st.toast(st.session_state.flash_msg, icon="✅")
+    if st.session_state.flash_type == 'error': st.error(st.session_state.flash_msg, icon="❌")
+    else: st.toast(st.session_state.flash_msg, icon="✅")
     st.session_state.flash_msg = ""
     st.session_state.flash_type = ""
 
@@ -138,14 +136,14 @@ def get_causas_con_flag() -> dict:
 def clear_catalog_cache():
     get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear()
 
-def get_clientes_cmdb(zona: str, equipo: str) -> dict:
-    if zona == "San Salvador (Central)": return {"clientes": 0, "fuente": "Datacenter/Core"}
+def get_clientes_cmdb(zona: str, equipo: str) -> int:
+    if zona == "San Salvador (Central)": return 0
     try:
         with engine.connect() as conn:
-            res = conn.execute(text("SELECT clientes, fuente FROM cmdb_nodos WHERE zona ILIKE :z AND equipo = :e ORDER BY id DESC LIMIT 1"), {"z": f"%{zona}%", "e": equipo}).fetchone()
-            if res: return {"clientes": res[0], "fuente": res[1]}
+            res = conn.execute(text("SELECT clientes FROM cmdb_nodos WHERE zona ILIKE :z AND equipo = :e ORDER BY id DESC LIMIT 1"), {"z": f"%{zona}%", "e": equipo}).fetchone()
+            if res: return res[0]
     except: pass
-    return {"clientes": 0, "fuente": "Manual"}
+    return 0
 
 # =====================================================================
 # CARGA Y ENRIQUECIMIENTO (CON SALVAVIDAS NaT)
@@ -171,7 +169,6 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
     
-    # Salvavidas para fechas corruptas
     df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], errors='coerce', utc=True)
     m_ini_not_null = df['inicio_incidente'].notnull()
     df.loc[m_ini_not_null, 'inicio_incidente'] = df.loc[m_ini_not_null, 'inicio_incidente'].dt.tz_convert(SV_TZ)
@@ -219,14 +216,12 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         "t2": {"fallas": 0, "mttr": 0.0},
         "t3": {"fallas": 0, "clientes_est": 0},
         "int": {"fallas": 0, "mttr": 0.0},
-        "abiertos": 0,
-        "zonas_sla": {} 
+        "abiertos": 0, "zonas_sla": {} 
     }
     if df.empty: return base
 
     base["abiertos"] = len(df[df['estado'] == 'Abierto'])
     
-    # Filtramos dates corruptos (Salvavidas)
     df_cerrados = df[(df['estado'] == 'Cerrado') & df['inicio_incidente'].notnull()]
     df_int = df_cerrados[df_cerrados['categoria'] == CAT_INTERNA]
     df_ext = df_cerrados[df_cerrados['categoria'] != CAT_INTERNA]
@@ -400,17 +395,17 @@ def do_login():
             if ud:
                 uid, ph, rol, fa, ldt, ban = ud
                 fa = fa or 0; now_sv = datetime.now(SV_TZ).replace(tzinfo=None)
-                if ban: st.session_state.log_err = "❌ Cuenta baneada."
-                elif ldt and ldt > now_sv: st.session_state.log_err = f"⏳ Bloqueado {(ldt - now_sv).seconds // 60 + 1} min."
+                if ban: st.session_state.log_err = "❌ Cuenta baneada permanentemente."
+                elif ldt and ldt > now_sv: st.session_state.log_err = f"⏳ Cuenta bloqueada por {(ldt - now_sv).seconds // 60 + 1} min."
                 elif check_pw(p, ph):
                     conn.execute(text("UPDATE users SET failed_attempts=0,locked_until=NULL WHERE id=:id"), {"id": uid})
                     st.session_state.update({"logged_in": True, "role": rol, "username": u, "log_err": ""}); return
                 else:
                     fa += 1
-                    if fa >= 6: conn.execute(text("UPDATE users SET is_banned=TRUE,failed_attempts=:f WHERE id=:id"), {"f": fa,"id": uid}); st.session_state.log_err = "❌ Cuenta bloqueada permanente."
-                    elif fa % 3 == 0: conn.execute(text("UPDATE users SET locked_until=:dt,failed_attempts=:f WHERE id=:id"), {"dt": now_sv + timedelta(minutes=5), "f": fa, "id": uid}); st.session_state.log_err = "⏳ Bloqueado 5 min."
-                    else: conn.execute(text("UPDATE users SET failed_attempts=:f WHERE id=:id"), {"f": fa, "id": uid}); st.session_state.log_err = f"❌ Incorrecto. Intento {fa}/6."
-            else: st.session_state.log_err = "❌ Usuario incorrecto."
+                    if fa >= 6: conn.execute(text("UPDATE users SET is_banned=TRUE,failed_attempts=:f WHERE id=:id"), {"f": fa,"id": uid}); st.session_state.log_err = "❌ Cuenta bloqueada permanentemente por seguridad."
+                    elif fa % 3 == 0: conn.execute(text("UPDATE users SET locked_until=:dt,failed_attempts=:f WHERE id=:id"), {"dt": now_sv + timedelta(minutes=5), "f": fa, "id": uid}); st.session_state.log_err = "⏳ Demasiados intentos. Bloqueado por 5 min."
+                    else: conn.execute(text("UPDATE users SET failed_attempts=:f WHERE id=:id"), {"f": fa, "id": uid}); st.session_state.log_err = "❌ Credenciales incorrectas."
+            else: st.session_state.log_err = "❌ Credenciales incorrectas."
     except Exception as ex: st.session_state.log_err = f"Error de conexión DB."
     st.session_state.log_u = ""; st.session_state.log_p = ""
 
@@ -420,6 +415,12 @@ if not st.session_state.logged_in:
     with col_c:
         with st.container(border=True):
             st.markdown("<div style='text-align:center;padding:20px 0 10px 0;'><div style='font-size:46px;'>🔐</div><h2 style='margin:10px 0 4px;color:#fff;font-weight:700;'>Acceso NOC Central</h2></div>", unsafe_allow_html=True)
+            
+            # VISIBILIDAD DE ERROR DE LOGIN (Dentro de la tarjeta)
+            if st.session_state.log_err:
+                st.error(st.session_state.log_err, icon="⚠️")
+                st.session_state.log_err = ""
+
             st.text_input("Usuario", key="log_u"); st.text_input("Contraseña", key="log_p", type="password")
             st.button("Iniciar Sesión", type="primary", on_click=do_login, use_container_width=True)
             st.caption("Contacte al Administrador de Redes para gestionar sus credenciales.")
@@ -429,7 +430,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.3 (Stable)")
+    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v28.4 (Clean Edition)")
     st.divider()
 
     anio_act = datetime.now(SV_TZ).year
@@ -543,7 +544,7 @@ with tabs[t_idx]:
 
         st.divider()
         
-        # Llama a la función reutilizable en lugar de tener 60 líneas repetidas
+        # Función DRY (reutilizada)
         dibujar_graficos(df_m)
 t_idx += 1
 
@@ -578,12 +579,10 @@ if role in ('admin', 'auditor'):
                 cat_f = c2f.selectbox("🏢 Segmento",  DEFAULT_CATEGORIAS, key=f"c_{fk}")
                 eq_f  = st.selectbox("🖥️ Equipo",     equipos_form,    key=f"e_{fk}")
 
-                cmdb_data = get_clientes_cmdb(z_f, eq_f)
-                d_cl = cmdb_data['clientes']
+                d_cl = get_clientes_cmdb(z_f, eq_f)
 
                 st.divider()
                 
-                # Reglas estrictas UX
                 if z_f == "San Salvador (Central)":
                     cl_f = 0; imp_pct = 0.0
                     st.number_input("👤 Clientes Afectados", value=0, disabled=True, key=f"cl_{fk}")
@@ -711,7 +710,7 @@ if role in ('admin', 'auditor'):
                         fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
                         
                         if fin_dt_val < ini_dt:
-                            st.error("❌ La fecha/hora de cierre no puede ser menor a la de inicio.")
+                            st.error("❌ La fecha y hora de cierre no puede ser menor a la de inicio.")
                         else:
                             dur_h = round((fin_dt_val - ini_dt).total_seconds() / 3600, 2)
                             with engine.begin() as conn:
@@ -724,6 +723,9 @@ if role in ('admin', 'auditor'):
 
         st.divider()
         st.markdown("#### Edición Avanzada (Tabla Masiva)")
+        # ADVERTENCIA DE PAGINACIÓN
+        st.info("⚠️ **Importante:** Si editas registros en la tabla, asegúrate de hacer clic en 'Guardar Ediciones Manuales' antes de cambiar de página para no perder tus cambios.")
+        
         papelera = st.toggle("🗑️ Explorar Papelera de Reciclaje")
         df_audit = enriquecer(load_data_rango(fecha_ini, fecha_fin, papelera, "Todas", "Todos", "Todos"))
 
@@ -784,36 +786,49 @@ if role in ('admin', 'auditor'):
                         st.rerun()
 
             if h_cam and cb2.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
-                with engine.begin() as conn:
-                    for i, r in ed_df.iterrows():
-                        if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
-                            try:
-                                ini_dt = pd.to_datetime(r.get('inicio_incidente'))
-                                if pd.isnull(r.get('fin_incidente')):
+                # Validar que no haya fechas de inicio vacías (El Escudo NaT)
+                fechas_validas = True
+                for i, r in ed_df.iterrows():
+                    if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
+                        if pd.isnull(r.get('inicio_incidente')):
+                            fechas_validas = False
+                            break
+                
+                if not fechas_validas:
+                    st.session_state.flash_msg = "❌ Error: La 'Fecha de Inicio' es obligatoria. No puede estar vacía."
+                    st.session_state.flash_type = "error"
+                    st.rerun()
+                else:
+                    with engine.begin() as conn:
+                        for i, r in ed_df.iterrows():
+                            if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r.drop('Sel'))):
+                                try:
+                                    ini_dt = pd.to_datetime(r.get('inicio_incidente'))
+                                    if pd.isnull(r.get('fin_incidente')):
+                                        fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
+                                    else:
+                                        fin_dt = pd.to_datetime(r.get('fin_incidente'))
+                                        fin_dt_sql = fin_dt
+                                        dur_u  = max(0, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
+                                        con_u = "Total"
+                                except: 
                                     fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
-                                else:
-                                    fin_dt = pd.to_datetime(r.get('fin_incidente'))
-                                    fin_dt_sql = fin_dt
-                                    dur_u  = max(0, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
-                                    con_u = "Total"
-                            except: 
-                                fin_dt_sql = None; dur_u = 0; con_u = "Parcial"
-                                
-                            conn.execute(text("""
-                                UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, estado=:est, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id
-                            """), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "est": r.get('estado','Cerrado'), "idi": ini_dt, "idf": fin_dt_sql, "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur_u, "con": con_u, "id": int(r['id'])})
-                log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
-                load_data_rango.clear()
-                st.session_state.flash_msg = "💾 Cambios guardados correctamente."
-                st.session_state.flash_type = "success"
-                st.rerun()
+                                    
+                                conn.execute(text("""
+                                    UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag, servicio=:s, categoria=:c, equipo_afectado=:e, estado=:est, inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d, duracion_horas=:dur, conocimiento_tiempos=:con WHERE id=:id
+                                """), {"z": r.get('zona',''), "sz": r.get('subzona',''), "ag": bool(r.get('afectacion_general', True)), "s": r.get('servicio',''), "c": r.get('categoria',''), "e": r.get('equipo_afectado',''), "est": r.get('estado','Cerrado'), "idi": ini_dt, "idf": fin_dt_sql, "cl": int(r.get('clientes_afectados', 0)), "cr": r.get('causa_raiz',''), "d": r.get('descripcion',''), "dur": dur_u, "con": con_u, "id": int(r['id'])})
+                    log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
+                    load_data_rango.clear()
+                    st.session_state.flash_msg = "💾 Cambios guardados correctamente."
+                    st.session_state.flash_type = "success"
+                    st.rerun()
 
             st.divider()
             st.download_button("📥 Descargar CSV de esta Tabla", df_d.drop(columns=drop_cols, errors='ignore').to_csv(index=False).encode(), f"NOC_Export_{fecha_ini}_{fecha_fin}.csv", "text/csv", use_container_width=True)
     t_idx += 1
 
 # ─────────────────────────────────────────────
-# TAB 4 — CONFIGURACIÓN
+# TAB 3 — CONFIGURACIÓN
 # ─────────────────────────────────────────────
 if role == 'admin' and len(tabs) > t_idx:
     with tabs[t_idx]:
@@ -834,7 +849,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         st.session_state.flash_msg = "🗑️ Zona eliminada."
                         st.rerun()
                     except Exception: 
-                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso."
+                        st.session_state.flash_msg = "❌ Error: La zona no puede eliminarse porque está en uso por un incidente."
                         st.session_state.flash_type = "error"
                         st.rerun()
             st.divider()
@@ -893,7 +908,7 @@ if role == 'admin' and len(tabs) > t_idx:
                         st.session_state.flash_msg = "🗑️ Causa eliminada."
                         st.rerun()
                     except Exception:
-                        st.session_state.flash_msg = "❌ Error: La causa está en uso."
+                        st.session_state.flash_msg = "❌ Error: La causa está en uso por un incidente."
                         st.session_state.flash_type = "error"
                         st.rerun()
             st.divider()
@@ -959,8 +974,13 @@ if role == 'admin' and len(tabs) > t_idx:
 
                     u1c, u2c = st.columns(2)
                     if not filas_del.empty and u1c.button("🗑️ Eliminar Usuario", use_container_width=True):
+                        # ESCUDO ANTI-SUICIDIO DIGITAL Y PROTECCIÓN DEL ADMIN
                         if "Admin" in filas_del['username'].values:
-                            st.error("No se puede eliminar la cuenta Admin.")
+                            st.error("❌ No se puede eliminar la cuenta Admin raíz.")
+                        elif st.session_state.username in filas_del['username'].values:
+                            st.session_state.flash_msg = "❌ No puedes eliminar tu propia cuenta mientras estás en sesión."
+                            st.session_state.flash_type = "error"
+                            st.rerun()
                         else:
                             with engine.begin() as conn:
                                 for rid in filas_del['id']: conn.execute(text("DELETE FROM users WHERE id=:id"), {"id": int(rid)})
