@@ -64,20 +64,13 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-# ── Inicialización SEGURA de sesión (Indentation Fix) ──
-sesion_keys = [
-    'form_reset', 'logged_in', 'role', 'username', 'log_u', 'log_p', 
-    'flash_msg', 'flash_type', 'log_err'
-]
-
-for k in sesion_keys:
-    if k not in st.session_state:
-        if k == 'logged_in':
-            st.session_state[k] = False
-        elif k == 'form_reset':
-            st.session_state[k] = 0
-        else:
-            st.session_state[k] = ''
+# ── Inicialización SEGURA de sesión ──
+for _k, _v in [
+    ('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''),
+    ('log_u', ''), ('log_p', ''), ('flash_msg', ''), ('flash_type', ''), ('log_err', '')
+]:
+    if _k not in st.session_state:
+        st.session_state[_k] = _v
 
 if st.session_state.flash_msg:
     if st.session_state.flash_type == 'error':
@@ -205,10 +198,12 @@ def load_data_rango(
     try:
         with engine.connect() as conn:
             return pd.read_sql(text(q), conn, params={"s": s_date, "e": e_date})
-    except:
+    except Exception as e:
+        # Falla ruidosa y controlada para evitar "tablas en blanco"
+        st.error(f"Error de SQL: {str(e)}")
         return pd.DataFrame()
 
-# 🚫 NO USAR @st.cache_data PARA EVITAR ERRORES DE ZONA HORARIA
+# 🚫 NO USAR CACHÉ AQUÍ PARA PROTEGER EL ESQUEMA DE PANDAS
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
@@ -330,7 +325,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
     return base
 
 # =====================================================================
-# COMPONENTE REUTILIZABLE: GRÁFICOS (REGLA DRY)
+# COMPONENTE REUTILIZABLE: GRÁFICOS
 # =====================================================================
 def dibujar_graficos(df_m: pd.DataFrame):
     if df_m.empty or 'duracion_horas' not in df_m.columns: return
@@ -947,6 +942,12 @@ if role in ('admin', 'auditor'):
         if df_audit.empty:
             st.info("No hay datos en el servidor para el periodo.")
         else:
+            
+            # FIX: Blindaje absoluto por si la tabla perdió sus columnas clave al importar CSV manualmente
+            if 'id' not in df_audit.columns:
+                st.error("🚨 **Error Estructural Crítico:** Tu base de datos perdió la columna `id`. \n\nEsto sucede si al importar el CSV en Neon marcaste 'Sobreescribir tabla' (lo cual destruye la arquitectura base). \n\n**Solución:** Ve a Neon, borra la tabla `incidents`, recarga esta página (el código la volverá a crear con la estructura perfecta) y luego importa tu CSV usando la opción 'Append' o ingresa los datos a mano.")
+                st.stop()
+            
             c_s, c_pg = st.columns([4, 1])
             bq = c_s.text_input("🔎 Buscar:", placeholder="Causa, nodo, equipo…")
             df_d = (df_audit[df_audit.astype(str)
@@ -962,6 +963,7 @@ if role in ('admin', 'auditor'):
             drop_cols = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje']
                          if c in df_page.columns]
 
+            # FIX: key única para matar cachés de sesión corruptos (La cura del KeyError)
             ed_df = st.data_editor(
                 df_page.drop(columns=drop_cols, errors='ignore'),
                 column_config={
@@ -972,6 +974,7 @@ if role in ('admin', 'auditor'):
                     "fin_incidente":    st.column_config.DatetimeColumn("Fin",    format="YYYY-MM-DD HH:mm"),
                 },
                 use_container_width=True, hide_index=True,
+                key="editor_incidentes_v2_blindado"
             )
 
             f_sel  = ed_df[ed_df["Sel"] == True]
@@ -1223,6 +1226,8 @@ if role == 'admin' and len(tabs) > t_idx:
                         df_usrs = pd.read_sql(
                             text("SELECT id,username,role,is_banned,failed_attempts FROM users"), conn)
                     df_usrs.insert(0, "Sel", False)
+                    
+                    # FIX: key única para usuarios también
                     ed_usrs = st.data_editor(
                         df_usrs,
                         column_config={
@@ -1234,6 +1239,7 @@ if role == 'admin' and len(tabs) > t_idx:
                             "failed_attempts": "Intentos Fallidos",
                         },
                         use_container_width=True, hide_index=True,
+                        key="editor_usuarios_v2_blindado"
                     )
                     filas_del   = ed_usrs[ed_usrs["Sel"] == True]
                     hay_cambios = not (df_usrs.drop(columns=['Sel']).reset_index(drop=True)
