@@ -65,27 +65,25 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 """, unsafe_allow_html=True)
 
 # ── Inicialización SEGURA de sesión ──
-sesion_keys = [
-    'form_reset', 'logged_in', 'role', 'username', 'log_u', 'log_p', 
-    'flash_msg', 'flash_type', 'log_err'
-]
+sesion_keys = {
+    'form_reset': 0, 'logged_in': False, 'role': '', 'username': '', 
+    'log_u': '', 'log_p': '', 'flash_msg': '', 'flash_type': '', 'log_err': ''
+}
 
-for k in sesion_keys:
+for k, v in sesion_keys.items():
     if k not in st.session_state:
-        if k == 'logged_in': st.session_state[k] = False
-        elif k == 'form_reset': st.session_state[k] = 0
-        else: st.session_state[k] = ''
+        st.session_state[k] = v
 
-if st.session_state.flash_msg:
-    if st.session_state.flash_type == 'error':
-        st.error(st.session_state.flash_msg, icon="❌")
+if st.session_state.get('flash_msg'):
+    if st.session_state.get('flash_type') == 'error':
+        st.error(st.session_state.get('flash_msg'), icon="❌")
     else:
-        st.toast(st.session_state.flash_msg, icon="✅")
-    st.session_state.flash_msg = ""
-    st.session_state.flash_type = ""
+        st.toast(st.session_state.get('flash_msg'), icon="✅")
+    st.session_state['flash_msg'] = ""
+    st.session_state['flash_type'] = ""
 
 # =====================================================================
-# FUNCIONES DE SEGURIDAD (NUEVO)
+# FUNCIONES DE SEGURIDAD
 # =====================================================================
 def es_password_segura(password: str) -> bool:
     """Verifica que la contraseña tenga min. 8 caracteres, 1 mayúscula, 1 minúscula, 1 número y 1 carácter especial"""
@@ -141,8 +139,10 @@ def init_db():
         if conn.execute(text("SELECT count(*) FROM cat_servicios")).scalar() == 0:
             for s in DEFAULT_SERVICIOS:
                 conn.execute(text("INSERT INTO cat_servicios (nombre) VALUES (:n) ON CONFLICT DO NOTHING"), {"n": s})
+        
+        # 🛡️ FIX: Crear el usuario Admin con contraseña segura "Areakde5@"
         if conn.execute(text("SELECT count(*) FROM users WHERE username='Admin'")).scalar() == 0:
-            conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES ('Admin',:h,'admin')"), {"h": hash_pw("Areakde5")})
+            conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES ('Admin',:h,'admin')"), {"h": hash_pw("Areakde5@")})
 
 try: init_db()
 except Exception as _e: st.error(f"Error DB Inicialización: {_e}")
@@ -217,7 +217,6 @@ def load_data_rango(
     except:
         return pd.DataFrame()
 
-# 🚫 NO USAR CACHÉ AQUÍ PARA EVITAR LA DESAPARICIÓN DE COLUMNAS
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
@@ -310,7 +309,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
             t_down_z = sum((e - s).total_seconds() for s, e in _merge_intervals(ivs_z)) / 3600.0
             base["zonas_sla"][z] = max(0.0, min(100.0, (h_tot - t_down_z) / h_tot * 100))
 
-        base["global"]["db"] = float(df_exact.get('duracion_horas'].sum())
+        base["global"]["db"] = float(df_exact.get('duracion_horas').sum())
         base["global"]["mh"] = float(df_exact.get('duracion_horas').max())
 
     df_t2 = df_exact[df_exact.get('clientes_afectados') == 0]
@@ -436,7 +435,7 @@ def log_audit(action: str, detail: str):
             conn.execute(
                 text("INSERT INTO audit_logs (timestamp,username,action,details) VALUES (:t,:u,:a,:d)"),
                 {"t": datetime.now(SV_TZ).replace(tzinfo=None),
-                 "u": st.session_state.get("username", "?"),
+                 "u": st.session_state.get("username", "Sistema"),
                  "a": action, "d": detail}
             )
     except: pass
@@ -595,7 +594,7 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
-    st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v1.0")
+    st.caption(f"👤 **{st.session_state.get('username', 'Usuario')}** ({st.session_state.get('role', 'Viewer').capitalize()})  |  NOC v1.0")
     st.divider()
 
     anio_act   = datetime.now(SV_TZ).year
@@ -642,7 +641,7 @@ with st.sidebar:
 # =====================================================================
 # PESTAÑAS POR ROL
 # =====================================================================
-role  = st.session_state.role
+role  = st.session_state.get('role', 'viewer')
 t_idx = 0
 
 if   role == 'admin':   tab_labels = ["📊 Dashboard", "📝 Registrar Evento", "🗂️ Historial y Edición", "⚙️ Configuración"]
@@ -675,7 +674,7 @@ with tabs[t_idx]:
             return f"{fmt.format((kpis[cat][key] - kpis_prev[cat][key]) / divisor)}{' '+suffix if suffix else ''}"
 
         # ── FALLAS EN CURSO ──
-        df_abiertos = df_m[df_m['estado'] == 'Abierto']
+        df_abiertos = df_m[df_m.get('estado') == 'Abierto'] if not df_m.empty else pd.DataFrame()
         if not df_abiertos.empty:
             st.error(f"🚨 Tienes {len(df_abiertos)} Falla(s) en Curso (Tickets Abiertos).", icon="🚨")
             st.dataframe(
@@ -754,7 +753,7 @@ t_idx += 1
 if role in ('admin', 'auditor'):
     with tabs[t_idx]:
         st.title("📝 Registrar Evento Operativo")
-        fk = st.session_state.form_reset
+        fk = st.session_state.get('form_reset', 0)
 
         zonas_form   = [z[0] for z in get_zonas()]
         equipos_form = get_cat("cat_equipos")
@@ -875,7 +874,7 @@ if role in ('admin', 'auditor'):
                                 log_audit("INSERT", f"Falla ({estado_db}) en {z_f}")
                                 load_data_rango.clear()
                                 get_all_cmdb_nodos.clear()
-                                st.session_state.form_reset += 1
+                                st.session_state['form_reset'] += 1
                                 st.session_state.flash_msg  = "✅ Registro guardado exitosamente."
                                 st.session_state.flash_type = "success"
                                 st.rerun()
@@ -890,7 +889,7 @@ if role in ('admin', 'auditor'):
                 for _, r in df_m.sort_values('id', ascending=False).head(6).iterrows():
                     with st.container(border=True):
                         ico = "🚨" if r.get('estado') == 'Abierto' else ("🔧" if r.get('categoria') == CAT_INTERNA else "📡")
-                        st.markdown(f"**{ico} {r['zona_completa']}**")
+                        st.markdown(f"**{ico} {r.get('zona_completa')}**")
                         st.caption(f"{str(r.get('causa_raiz',''))[:30]}… | 👥 {r.get('clientes_afectados', 0)}")
             else:
                 st.info("Sin registros en la tabla.")
@@ -949,7 +948,6 @@ if role in ('admin', 'auditor'):
         st.divider()
         st.markdown("#### Edición Avanzada (Tabla Masiva)")
         
-        # 💡 Mejoras de UX (Guía de Edición Intuitiva)
         st.info("💡 **¿Cómo gestionar los datos en esta tabla?** \n\n"
                 "✏️ **Para Editar:** Haz doble clic en cualquier celda para modificarla. Al terminar, no olvides presionar el botón azul **'💾 Guardar Ediciones Manuales'** abajo.\n\n"
                 "🗑️ **Para Eliminar:** Marca la casilla **'✔'** a la izquierda de las filas que quieres borrar, y presiona el botón rojo **'🗑️ Eliminar Seleccionados'** abajo.")
@@ -1016,7 +1014,6 @@ if role in ('admin', 'auditor'):
                         st.session_state.flash_type = "success"
                         st.rerun()
                     
-                    # 💡 NUEVO: Botón para Destruir Definitivamente
                     if cb2.button("🔥 Destruir Definitivamente", type="secondary", use_container_width=True):
                         with engine.begin() as conn:
                             for rid in f_sel['id']:
@@ -1081,7 +1078,8 @@ if role in ('admin', 'auditor'):
                                        "ag": bool(r.get('afectacion_general', True)),
                                        "s": str(r.get('servicio','')), "c": str(r.get('categoria','')),
                                        "e": str(r.get('equipo_afectado','')), "est": est_u,
-                                       "idi": ini_dt, "idf": fin_dt_sql, "cl": cl_val,
+                                       "idi": ini_dt, "idf": fin_dt_sql,
+                                       "cl": cl_val,
                                        "cr": str(r.get('causa_raiz','')), "d": str(r.get('descripcion','')),
                                        "dur": dur_u, "con": con_u, "id": int(r.get('id'))})
 
@@ -1218,7 +1216,6 @@ if role == 'admin' and len(tabs) > t_idx:
                     nrl  = st.selectbox("Rol Asignado", ["viewer", "auditor", "admin"])
                     
                     if st.form_submit_button("Crear Cuenta") and nu and np_u:
-                        # 💡 NUEVO: Validación estricta de contraseña
                         if not es_password_segura(np_u):
                             st.session_state.flash_msg = "La contraseña no cumple con los requisitos de seguridad."
                             st.session_state.flash_type = "error"
@@ -1244,7 +1241,6 @@ if role == 'admin' and len(tabs) > t_idx:
                     p_reset = st.text_input("Nueva Contraseña", type="password")
                     
                     if st.form_submit_button("Restablecer") and u_reset and p_reset:
-                        # 💡 NUEVO: Validación al restablecer
                         if not es_password_segura(p_reset):
                             st.session_state.flash_msg = "La contraseña nueva no cumple con los requisitos de seguridad."
                             st.session_state.flash_type = "error"
@@ -1292,7 +1288,7 @@ if role == 'admin' and len(tabs) > t_idx:
                     if not filas_del.empty and u1c.button("🗑️ Eliminar Usuario", use_container_width=True):
                         if "Admin" in filas_del['username'].values:
                             st.error("❌ No se puede eliminar la cuenta Admin raíz.")
-                        elif st.session_state.username in filas_del['username'].values:
+                        elif st.session_state.get('username') in filas_del['username'].values:
                             st.session_state.flash_msg  = "❌ No puedes eliminar tu propia cuenta mientras estás en sesión."
                             st.session_state.flash_type = "error"
                             st.rerun()
