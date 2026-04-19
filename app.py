@@ -13,7 +13,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.units import cm
 
 # =====================================================================
-# NOC v1.0 - VERSIÓN 6.0 (ANTI-CACHÉ Y BLINDADA)
+# CONFIGURACIÓN GLOBAL Y CONSTANTES CORPORATIVAS
 # =====================================================================
 st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="📊")
 SV_TZ = pytz.timezone('America/El_Salvador')
@@ -64,7 +64,7 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-# ── Inicialización SEGURA y completa de sesión ──
+# ── Inicialización SEGURA de sesión ──
 sesion_keys = [
     'form_reset', 'logged_in', 'role', 'username', 'log_u', 'log_p', 
     'flash_msg', 'flash_type', 'log_err'
@@ -583,6 +583,9 @@ if not st.session_state.logged_in:
 # SIDEBAR
 # =====================================================================
 with st.sidebar:
+    # 🌟 LETRERO DE VERIFICACIÓN VISUAL 🌟
+    st.success("✅ VERSIÓN 7.0 (BLINDADA)")
+    
     st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v1.0")
     st.divider()
 
@@ -956,7 +959,7 @@ if role in ('admin', 'auditor'):
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_page.insert(0, "Sel", False)
 
-            # 🛡️ FIX BLINDADO: La lista de comprensión evita el KeyError de PyArrow
+            # 🛡️ PROTECCIÓN ANTI-CACHÉ ABSOLUTA
             drop_cols = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje']
                          if c in df_page.columns]
 
@@ -970,12 +973,11 @@ if role in ('admin', 'auditor'):
                     "fin_incidente":    st.column_config.DatetimeColumn("Fin",    format="YYYY-MM-DD HH:mm"),
                 },
                 use_container_width=True, hide_index=True,
-                key="editor_incidentes_v7_final"
+                key="editor_incidentes_v8_seguro"
             )
 
             f_sel  = ed_df[ed_df["Sel"] == True]
             
-            # 🛡️ FIX SEGURO: Genera la lista de columnas exacta para que pandas no lance excepciones
             cols_to_drop_ref = [c for c in drop_cols + ['Sel'] if c in df_page.columns]
             ref_df = df_page.drop(columns=cols_to_drop_ref).reset_index(drop=True)
 
@@ -1040,7 +1042,6 @@ if role in ('admin', 'auditor'):
                                 except:
                                     fin_dt_sql = None; dur_u = 0.0; con_u = "Parcial"; est_u = "Abierto"
 
-                                # 🛡️ DEFENSA EXTRA: Evita colapsos si dejas una celda numérica en blanco
                                 try:
                                     cl_val = r.get('clientes_afectados', 0)
                                     cl_val = int(float(cl_val)) if pd.notnull(cl_val) and str(cl_val).strip() != '' else 0
@@ -1069,7 +1070,6 @@ if role in ('admin', 'auditor'):
                     st.rerun()
 
             st.divider()
-            # 🛡️ FIX BLINDADO FINAL: CSV Download no lanza KeyError si faltan columnas
             cols_to_drop_csv = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje'] if c in df_d.columns]
             st.download_button(
                 "📥 Descargar CSV de esta Tabla",
@@ -1234,7 +1234,6 @@ if role == 'admin' and len(tabs) > t_idx:
                             text("SELECT id,username,role,is_banned,failed_attempts FROM users"), conn)
                     df_usrs.insert(0, "Sel", False)
                     
-                    # 🛡️ FIX ABSOLUTO: Caché de usuarios blindado
                     ed_usrs = st.data_editor(
                         df_usrs,
                         column_config={
@@ -1246,7 +1245,7 @@ if role == 'admin' and len(tabs) > t_idx:
                             "failed_attempts": "Intentos Fallidos",
                         },
                         use_container_width=True, hide_index=True,
-                        key="editor_usuarios_final_v7"
+                        key="editor_usuarios_final_v8"
                     )
                     filas_del   = ed_usrs[ed_usrs["Sel"] == True]
                     hay_cambios = not (df_usrs.drop(columns=['Sel']).reset_index(drop=True)
