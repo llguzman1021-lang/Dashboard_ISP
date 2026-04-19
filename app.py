@@ -22,30 +22,31 @@ COLOR_PRIMARY   = '#f15c22'
 COLOR_SECONDARY = '#1d2c59'
 COLOR_TEAL      = '#29b09d'
 COLOR_DANGER    = '#ff2b2b'
-PALETA_CORP     = [COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER]
+PALETA_CORP     = (COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER)
 
-DEFAULT_ZONAS = [
+# FIX BUGS OCULTOS: Uso de Tuplas (...) en lugar de Listas [...] para evitar errores de caché (Unhashable type)
+DEFAULT_ZONAS = (
     ("El Rosario", 13.4886, -89.0256), ("ARG", 13.4880, -89.3200), ("Tepezontes", 13.6214, -89.0125),
     ("La Libertad", 13.4883, -89.3200), ("El Tunco", 13.4930, -89.3830), ("Costa del Sol", 13.3039, -88.9450),
     ("Zacatecoluca", 13.5048, -88.8710), ("Zaragoza", 13.5850, -89.2890), ("Santiago Nonualco", 13.5186, -88.9442),
     ("Rio Mar", 13.4900, -89.3500), ("San Salvador (Central)", 13.6929, -89.2182),
-]
-DEFAULT_EQUIPOS = [
+)
+DEFAULT_EQUIPOS = (
     "ONT", "Repetidor Wi-Fi", "Antena Ubiquiti", "OLT", "Caja NAP", "Switch", "Fibra Principal",
     "Servidor de Aplicativos", "Servidor DNS", "Servidor Virtual", "Mikrotik Concentrador",
     "Encoder", "Caja Señal TV", "Antena Señal TV"
-]
-DEFAULT_CAUSAS = [
+)
+DEFAULT_CAUSAS = (
     ("Corte de Fibra por Terceros", True), ("Corte de Fibra (No Especificado)", False), ("Caída de Árboles sobre Fibra", True),
     ("Falla de Energía Comercial", True), ("Corrosión en Equipos", False), ("Daños por Fauna", True),
     ("Falla de Hardware", False), ("Falla de Configuración", False), ("Falla de Redundancia", False),
     ("Saturación de Tráfico", False), ("Saturación en Servidor", False), ("Mantenimiento Programado", False),
     ("Vandalismo o Hurto", True), ("Condiciones Climáticas", True),
-]
-DEFAULT_SERVICIOS = ["Internet", "Cable TV (CATV)", "IPTV (Mnet+)", "Internet/Cable TV", "Aplicativos internos"]
-DEFAULT_CATEGORIAS = ["Red Multinet", "Cliente Corporativo", "Falla Interna (No afecta clientes)"]
+)
+DEFAULT_SERVICIOS  = ("Internet", "Cable TV (CATV)", "IPTV (Mnet+)", "Internet/Cable TV", "Aplicativos internos")
+DEFAULT_CATEGORIAS = ("Red Multinet", "Cliente Corporativo", "Falla Interna (No afecta clientes)")
 CAT_INTERNA = "Falla Interna (No afecta clientes)"
-MESES = ["Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre"]
+MESES = ("Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre")
 
 st.markdown("""
 <style>
@@ -64,19 +65,15 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 </style>
 """, unsafe_allow_html=True)
 
-# =====================================================================
-# FIX BUG 1: Inicialización COMPLETA del session_state
-# Se añade 'log_err' que faltaba y causaba el AttributeError en línea 428
-# =====================================================================
+# ── Inicialización SEGURA de sesión ──
 for _k, _v in [
     ('form_reset', 0), ('logged_in', False), ('role', ''), ('username', ''),
     ('log_u', ''), ('log_p', ''), ('flash_msg', ''), ('flash_type', ''),
-    ('log_err', ''),   # <-- CLAVE QUE FALTABA — causaba el crash
+    ('log_err', ''),   # CLAVE PARA EVITAR EL ATTRIBUTE ERROR
 ]:
     if _k not in st.session_state:
         st.session_state[_k] = _v
 
-# Mostrar mensajes flash globales (éxito o error desde acciones previas)
 if st.session_state.flash_msg:
     if st.session_state.flash_type == 'error':
         st.error(st.session_state.flash_msg, icon="❌")
@@ -133,56 +130,42 @@ def init_db():
         if conn.execute(text("SELECT count(*) FROM users WHERE username='Admin'")).scalar() == 0:
             conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES ('Admin',:h,'admin')"), {"h": hash_pw("Areakde5")})
 
-try:
-    init_db()
-except Exception as _e:
-    st.error(f"Error DB Inicialización: {_e}")
+try: init_db()
+except Exception as _e: st.error(f"Error DB Inicialización: {_e}")
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_zonas() -> list:
     try:
-        with engine.connect() as c:
-            return [(r[0], r[1], r[2]) for r in c.execute(text("SELECT nombre, lat, lon FROM cat_zonas ORDER BY nombre")).fetchall()]
-    except:
-        return list(DEFAULT_ZONAS)
+        with engine.connect() as c: return [(r[0], r[1], r[2]) for r in c.execute(text("SELECT nombre, lat, lon FROM cat_zonas ORDER BY nombre")).fetchall()]
+    except: return list(DEFAULT_ZONAS)
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_cat(tabla: str) -> list:
     try:
-        with engine.connect() as c:
-            return [r[0] for r in c.execute(text(f"SELECT nombre FROM {tabla} ORDER BY nombre")).fetchall()]
-    except:
-        return []
+        with engine.connect() as c: return [r[0] for r in c.execute(text(f"SELECT nombre FROM {tabla} ORDER BY nombre")).fetchall()]
+    except: return []
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_causas_con_flag() -> dict:
     try:
-        with engine.connect() as c:
-            return {r[0]: r[1] for r in c.execute(text("SELECT nombre, es_externa FROM cat_causas ORDER BY nombre")).fetchall()}
-    except:
-        return {}
+        with engine.connect() as c: return {r[0]: r[1] for r in c.execute(text("SELECT nombre, es_externa FROM cat_causas ORDER BY nombre")).fetchall()}
+    except: return {}
 
 def clear_catalog_cache():
-    """Limpia todos los caches de catálogo y enriquecimiento para reflejar cambios inmediatamente."""
     get_zonas.clear()
     get_cat.clear()
     get_causas_con_flag.clear()
-    # FIX BUG 8: También limpiar enriquecer cuando cambian los catálogos (causas)
-    enriquecer.clear()
 
-# OPTIMIZACIÓN: CMDB a Memoria RAM (Respuesta de 0ms)
 @st.cache_data(ttl=300, show_spinner=False)
 def get_all_cmdb_nodos() -> dict:
     try:
         with engine.connect() as conn:
             res = conn.execute(text("SELECT zona, equipo, clientes FROM cmdb_nodos")).fetchall()
             return {(str(r[0]).lower(), str(r[1]).lower()): r[2] for r in res}
-    except:
-        return {}
+    except: return {}
 
 def get_clientes_cmdb(zona: str, equipo: str) -> int:
-    if zona == "San Salvador (Central)":
-        return 0
+    if zona == "San Salvador (Central)": return 0
     cmdb = get_all_cmdb_nodos()
     for (z, e), clientes in cmdb.items():
         if z in zona.lower() and e == equipo.lower():
@@ -190,7 +173,7 @@ def get_clientes_cmdb(zona: str, equipo: str) -> int:
     return 0
 
 # =====================================================================
-# CARGA Y ENRIQUECIMIENTO (Caché Avanzado)
+# CARGA Y ENRIQUECIMIENTO (SIN CACHÉ PARA EVITAR BUGS DE PYARROW)
 # =====================================================================
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(
@@ -200,8 +183,6 @@ def load_data_rango(
     s_date = datetime.combine(fecha_ini, datetime_time(0, 0, 0))
     e_date = datetime.combine(fecha_fin, datetime_time(23, 59, 59))
 
-    # FIX BUG 5: Tickets abiertos ahora solo se incluyen si su inicio está DENTRO del rango
-    # La condición anterior traía todos los tickets abiertos de la historia sin filtro de fecha.
     conds = [
         "("
         "  (inicio_incidente >= :s AND inicio_incidente <= :e)"
@@ -211,12 +192,9 @@ def load_data_rango(
         ")"
     ]
     conds.append("deleted_at IS NULL" if not include_deleted else "deleted_at IS NOT NULL")
-    if zona_filtro != "Todas":
-        conds.append(f"zona = '{zona_filtro.replace(chr(39), chr(39)*2)}'")
-    if serv_filtro != "Todos":
-        conds.append(f"servicio = '{serv_filtro.replace(chr(39), chr(39)*2)}'")
-    if seg_filtro != "Todos":
-        conds.append(f"categoria = '{seg_filtro.replace(chr(39), chr(39)*2)}'")
+    if zona_filtro != "Todas": conds.append(f"zona = '{zona_filtro.replace(chr(39), chr(39)*2)}'")
+    if serv_filtro != "Todos": conds.append(f"servicio = '{serv_filtro.replace(chr(39), chr(39)*2)}'")
+    if seg_filtro != "Todos":  conds.append(f"categoria = '{seg_filtro.replace(chr(39), chr(39)*2)}'")
 
     q = "SELECT * FROM incidents WHERE " + " AND ".join(conds) + " ORDER BY inicio_incidente ASC"
     try:
@@ -225,57 +203,55 @@ def load_data_rango(
     except:
         return pd.DataFrame()
 
-@st.cache_data(ttl=60, show_spinner=False)
+# 🚫 FIX CRÍTICO: NO usar @st.cache_data aquí. Evita el "NoneType tzinfo" y la desaparición de columnas.
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
-    if df.empty:
-        return df
+    if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
+    
+    # Parseo de fechas extremadamente defensivo
+    if 'inicio_incidente' in df.columns:
+        df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], errors='coerce', utc=True)
+        m_ini = df['inicio_incidente'].notnull()
+        if m_ini.any(): df.loc[m_ini, 'inicio_incidente'] = df.loc[m_ini, 'inicio_incidente'].dt.tz_convert(SV_TZ)
 
-    # FIX BUG 4: Conversión de timezone robusta — aplicada a toda la columna, no con máscara parcial
-    # La asignación parcial con .loc[mask] causaba ValueError en pandas moderno con series tz-aware
-    df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], errors='coerce', utc=True)
-    df['inicio_incidente'] = df['inicio_incidente'].dt.tz_convert(SV_TZ)
+    if 'fin_incidente' in df.columns:
+        df['fin_incidente'] = pd.to_datetime(df['fin_incidente'], errors='coerce', utc=True)
+        m_fin = df['fin_incidente'].notnull()
+        if m_fin.any(): df.loc[m_fin, 'fin_incidente'] = df.loc[m_fin, 'fin_incidente'].dt.tz_convert(SV_TZ)
 
-    df['fin_incidente'] = pd.to_datetime(df['fin_incidente'], errors='coerce', utc=True)
-    df['fin_incidente'] = df['fin_incidente'].dt.tz_convert(SV_TZ)
-
-    df['duracion_horas']     = pd.to_numeric(df['duracion_horas'],     errors='coerce').fillna(0.0)
-    df['clientes_afectados'] = pd.to_numeric(df['clientes_afectados'], errors='coerce').fillna(0).astype(int)
+    # Uso de .get() por si PyArrow llegara a borrar la columna
+    df['duracion_horas']     = pd.to_numeric(df.get('duracion_horas', 0), errors='coerce').fillna(0.0)
+    df['clientes_afectados'] = pd.to_numeric(df.get('clientes_afectados', 0), errors='coerce').fillna(0).astype(int)
     causas_ext_map = get_causas_con_flag()
 
     def _severidad(r) -> str:
-        if r.get('estado') == 'Abierto':                                       return '🚨 CRÍTICA (En Curso)'
-        if r['categoria'] == CAT_INTERNA:                                      return '🟢 P4 (Interna)'
-        if r['duracion_horas'] >= 12 or r['clientes_afectados'] >= 1000:       return '🔴 P1 (Crítica)'
-        if r['duracion_horas'] >= 4  or r['clientes_afectados'] >= 300:        return '🟠 P2 (Alta)'
+        if r.get('estado') == 'Abierto':                                      return '🚨 CRÍTICA (En Curso)'
+        if r.get('categoria') == CAT_INTERNA:                                 return '🟢 P4 (Interna)'
+        if r.get('duracion_horas', 0) >= 12 or r.get('clientes_afectados', 0) >= 1000: return '🔴 P1 (Crítica)'
+        if r.get('duracion_horas', 0) >= 4  or r.get('clientes_afectados', 0) >= 300:  return '🟠 P2 (Alta)'
         return '🟡 P3 (Media)'
 
     df['Severidad']     = df.apply(_severidad, axis=1)
-    df['es_externa']    = df['causa_raiz'].map(lambda x: causas_ext_map.get(x, False))
-    df['zona_completa'] = df.apply(
-        lambda r: f"{r['zona']} (General)" if r.get('afectacion_general', True)
-                  else f"{r['zona']} - {r['subzona']}", axis=1)
+    df['es_externa']    = df.get('causa_raiz', pd.Series()).map(lambda x: causas_ext_map.get(x, False))
+    df['zona_completa'] = df.apply(lambda r: f"{r.get('zona')} (General)" if r.get('afectacion_general', True) else f"{r.get('zona')} - {r.get('subzona')}", axis=1)
+    
     return df
 
 # =====================================================================
-# KPIs MATEMÁTICOS (Anti-Doble Descuento y Zonas Geográficas)
+# KPIs MATEMÁTICOS
 # =====================================================================
 def _merge_intervals(intervals: list) -> list:
-    if not intervals:
-        return []
+    if not intervals: return []
     srt = sorted(intervals, key=lambda x: x[0])
     merged = [list(srt[0])]
     for s, e in srt[1:]:
-        if s <= merged[-1][1]:
-            merged[-1][1] = max(merged[-1][1], e)
-        else:
-            merged.append([s, e])
+        if s <= merged[-1][1]: merged[-1][1] = max(merged[-1][1], e)
+        else: merged.append([s, e])
     return merged
 
 def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
-    h_tot = ((datetime.combine(fecha_fin, datetime_time(23, 59, 59)) -
-              datetime.combine(fecha_ini, datetime_time(0, 0, 0))).total_seconds()) / 3600.0
+    h_tot = ((datetime.combine(fecha_fin, datetime_time(23, 59, 59)) - datetime.combine(fecha_ini, datetime_time(0, 0, 0))).total_seconds()) / 3600.0
     rng_s = SV_TZ.localize(datetime.combine(fecha_ini, datetime_time(0, 0, 0)))
     rng_e = SV_TZ.localize(datetime.combine(fecha_fin, datetime_time(23, 59, 59)))
 
@@ -287,8 +263,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         "int":    {"fallas": 0, "mttr": 0.0},
         "abiertos": 0, "zonas_sla": {}
     }
-    if df.empty:
-        return base
+    if df.empty: return base
 
     base["abiertos"] = len(df[df['estado'] == 'Abierto'])
 
@@ -301,8 +276,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         iv = df_int[df_int['duracion_horas'] > 0]
         base["int"]["mttr"] = float(iv['duracion_horas'].mean()) if not iv.empty else 0.0
 
-    if df_ext.empty:
-        return base
+    if df_ext.empty: return base
 
     base["global"]["total_fallas"] = len(df_ext)
     base["global"]["p1"]           = int((df_ext['Severidad'] == '🔴 P1 (Crítica)').sum())
@@ -329,8 +303,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
 
     df_t2 = df_exact[df_exact['clientes_afectados'] == 0]
     base["t2"]["fallas"] = len(df_t2)
-    if not df_t2.empty:
-        base["t2"]["mttr"] = float(df_t2['duracion_horas'].mean())
+    if not df_t2.empty: base["t2"]["mttr"] = float(df_t2['duracion_horas'].mean())
 
     df_t1 = df_exact[df_exact['clientes_afectados'] > 0]
     base["t1"]["fallas"] = len(df_t1)
@@ -347,8 +320,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         valid = (s_cl <= e_cl)
         ivs   = [[s, e] for s, e in zip(s_cl[valid], e_cl[valid])]
         t_down = sum((e - s).total_seconds() for s, e in _merge_intervals(ivs)) / 3600.0
-    else:
-        t_down = 0.0
+    else: t_down = 0.0
 
     base["global"]["sla"]  = max(0.0, min(100.0, (h_tot - t_down) / h_tot * 100)) if h_tot > 0 else 100.0
     base["global"]["mtbf"] = float((h_tot - t_down) / len(df_exact)) if len(df_exact) > 0 else float(h_tot)
@@ -358,7 +330,7 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
 # COMPONENTE REUTILIZABLE: GRÁFICOS (REGLA DRY)
 # =====================================================================
 def dibujar_graficos(df_m: pd.DataFrame):
-    # FIX BUG 3: Trabajar sobre una copia local para no mutar el DataFrame cacheado original
+    if df_m.empty or 'duracion_horas' not in df_m.columns: return
     df_m = df_m.copy()
 
     st.markdown("### 🗺️ Análisis Geográfico y Temporal")
@@ -366,6 +338,7 @@ def dibujar_graficos(df_m: pd.DataFrame):
     df_map = df_m.copy()
     df_map['lat'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[0])
     df_map['lon'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
+    
     agg = (df_map.groupby(['zona_completa','lat','lon'])
            .agg(Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum'))
            .reset_index())
@@ -410,7 +383,6 @@ def dibujar_graficos(df_m: pd.DataFrame):
 
     c_pie, c_bar = st.columns(2)
     with c_pie:
-        # Operación sobre la copia local — no afecta al DataFrame original
         df_m['Tipo'] = df_m['es_externa'].map({True: 'Externa (Fuerza Mayor)', False: 'Interna (Infraestructura / NOC)'})
         agg_r = df_m.groupby('Tipo').size().reset_index(name='Eventos')
         fig_p = px.pie(
@@ -455,8 +427,7 @@ def log_audit(action: str, detail: str):
                  "u": st.session_state.get("username", "?"),
                  "a": action, "d": detail}
             )
-    except:
-        pass
+    except: pass
 
 def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     def mk_style(name, size, font='Helvetica', color=rl_colors.black, **kw):
@@ -504,13 +475,13 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     story.append(Paragraph("1. Métricas Operativas Principales", s_sec))
     kpi_rows = [
         ['Indicador', 'Valor', 'Descripción'],
-        ['SLA Global (Disponibilidad)',   f"{kpis['global']['sla']:.3f}%",          'Intervalos fusionados (Excluye mantenimientos)'],
-        ['MTTR Real',                     f"{kpis['t1']['mttr']:.2f} horas",        'Resolución promedio (clientes > 0)'],
-        ['ACD Real (Afectación)',         f"{kpis['t1']['acd']:.2f} horas",         'Percepción real del usuario'],
-        ['Impacto Acumulado',             f"{(kpis['global']['db']/24):.2f} días",  'Horas totales caídas / 24'],
-        ['Clientes Impactados',           f"{kpis['t1']['clientes']:,}",            'Usuarios afectados (T1)'],
-        ['MTBF (Estabilidad)',            f"{kpis['global']['mtbf']:.1f} horas",    'Tiempo medio entre fallas'],
-        ['Fallas P1 Críticas',            f"{kpis['global']['p1']}",                '>12 h o >1000 clientes'],
+        ['SLA Global (Disponibilidad)',   f"{kpis['global']['sla']:.3f}%",           'Intervalos fusionados (Excluye mantenimientos)'],
+        ['MTTR Real',                     f"{kpis['t1']['mttr']:.2f} horas",         'Resolución promedio (clientes > 0)'],
+        ['ACD Real (Afectación)',         f"{kpis['t1']['acd']:.2f} horas",          'Percepción real del usuario'],
+        ['Impacto Acumulado',             f"{(kpis['global']['db']/24):.2f} días",   'Horas totales caídas / 24'],
+        ['Clientes Impactados',           f"{kpis['t1']['clientes']:,}",             'Usuarios afectados (T1)'],
+        ['MTBF (Estabilidad)',            f"{kpis['global']['mtbf']:.1f} horas",     'Tiempo medio entre fallas'],
+        ['Fallas P1 Críticas',            f"{kpis['global']['p1']}",                 '>12 h o >1000 clientes'],
     ]
     t = Table(kpi_rows, colWidths=[5.5*cm, 3*cm, 8.5*cm])
     t.setStyle(tbl_style(rl_colors.HexColor(COLOR_SECONDARY)))
@@ -527,8 +498,8 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
     tp.setStyle(tbl_style(rl_colors.HexColor(COLOR_TEAL)))
     story += [tp, Spacer(1, 0.4*cm)]
 
-    if not df.empty:
-        df_ext = df[(df['categoria'] != CAT_INTERNA) & (df['estado'] == 'Cerrado')]
+    if not df.empty and 'duracion_horas' in df.columns:
+        df_ext = df[(df.get('categoria') != CAT_INTERNA) & (df.get('estado') == 'Cerrado')]
         if not df_ext.empty:
             story.append(Paragraph("3. Zonas con Mayor Afectación", s_sec))
             top_z = df_ext.groupby('zona_completa')['duracion_horas'].sum().nlargest(8).reset_index()
@@ -598,7 +569,6 @@ if not st.session_state.logged_in:
         with st.container(border=True):
             st.markdown("<div style='text-align:center;padding:20px 0 10px 0;'><div style='font-size:46px;'>🔐</div><h2 style='margin:10px 0 4px;color:#fff;font-weight:700;'>Acceso NOC Central</h2></div>", unsafe_allow_html=True)
 
-            # FIX BUG 1: log_err ahora siempre existe — no más AttributeError
             if st.session_state.log_err:
                 st.error(st.session_state.log_err, icon="⚠️")
                 st.session_state.log_err = ""
@@ -631,7 +601,7 @@ with st.sidebar:
     st.divider()
     z_sel   = st.selectbox("🗺️ Zona",     ["Todas"]  + [z[0] for z in get_zonas()])
     srv_sel = st.selectbox("🌐 Servicio", ["Todos"]  + get_cat("cat_servicios"))
-    seg_sel = st.selectbox("🏢 Segmento", ["Todos"]  + DEFAULT_CATEGORIAS)
+    seg_sel = st.selectbox("🏢 Segmento", ["Todos"]  + list(DEFAULT_CATEGORIAS))
 
     df_m = enriquecer(load_data_rango(fecha_ini, fecha_fin, False, z_sel, srv_sel, seg_sel))
 
@@ -795,8 +765,8 @@ if role in ('admin', 'auditor'):
 
                 c1f, c2f = st.columns(2)
                 srv_f = c1f.selectbox("🌐 Servicio",  servs_form,         key=f"s_{fk}")
-                cat_f = c2f.selectbox("🏢 Segmento",  DEFAULT_CATEGORIAS, key=f"c_{fk}")
-                eq_f  = st.selectbox("🖥️ Equipo",      equipos_form,      key=f"e_{fk}")
+                cat_f = c2f.selectbox("🏢 Segmento",  list(DEFAULT_CATEGORIAS), key=f"c_{fk}")
+                eq_f  = st.selectbox("🖥️ Equipo",     equipos_form,       key=f"e_{fk}")
 
                 d_cl = get_clientes_cmdb(z_f, eq_f)
 
@@ -909,7 +879,7 @@ if role in ('admin', 'auditor'):
                     with st.container(border=True):
                         ico = "🚨" if r.get('estado') == 'Abierto' else ("🔧" if r.get('categoria') == CAT_INTERNA else "📡")
                         st.markdown(f"**{ico} {r['zona_completa']}**")
-                        st.caption(f"{str(r.get('causa_raiz',''))[:30]}… | 👥 {r['clientes_afectados']}")
+                        st.caption(f"{str(r.get('causa_raiz',''))[:30]}… | 👥 {r.get('clientes_afectados', 0)}")
             else:
                 st.info("Sin registros en la tabla.")
     t_idx += 1
@@ -927,13 +897,11 @@ if role in ('admin', 'auditor'):
             st.warning("🚨 Tienes fallas en curso. Puedes cerrarlas rápidamente aquí:")
             with st.expander("Cerrar Falla en Curso (Ticket Abierto)", expanded=True):
                 with st.form("form_cerrar_ticket"):
-                    # FIX BUG 2: strftime sobre NaT lanzaba AttributeError.
-                    # Ahora se usa un formato defensivo con comprobación de nulidad.
                     def _fmt_inicio(ts):
                         try:
-                            return ts.strftime('%d/%m/%Y %H:%M') if pd.notnull(ts) else 'Sin hora registrada'
+                            return ts.strftime('%d/%m/%Y %H:%M') if pd.notnull(ts) else 'Sin hora'
                         except Exception:
-                            return 'Sin hora registrada'
+                            return 'Sin hora'
 
                     t_opts = {
                         r['id']: f"ID: {r['id']} | Nodo: {r['zona_completa']} | Inicio: {_fmt_inicio(r['inicio_incidente'])}"
@@ -949,7 +917,6 @@ if role in ('admin', 'auditor'):
                         ini_dt     = r_orig['inicio_incidente']
                         fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
 
-                        # FIX BUG 6: Validar que ini_dt no sea NaT antes de comparar
                         if pd.isnull(ini_dt):
                             st.error("❌ Este ticket no tiene hora de inicio registrada. Edítalo manualmente en la tabla.")
                         elif fin_dt_val < ini_dt:
