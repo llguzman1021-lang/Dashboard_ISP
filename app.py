@@ -47,7 +47,7 @@ DEFAULT_CATEGORIAS = ("Red Multinet", "Cliente Corporativo", "Falla Interna (No 
 CAT_INTERNA = "Falla Interna (No afecta clientes)"
 MESES = ("Enero","Febrero","Marzo","Abril","Mayo","Junio","Julio","Agosto","Septiembre","Octubre","Noviembre","Diciembre")
 
-# ── WHITELIST de tablas permitidas para get_cat (evita SQL injection) ──
+# Whitelist de tablas permitidas para get_cat
 _ALLOWED_TABLES = {"cat_zonas", "cat_equipos", "cat_causas", "cat_servicios", "cmdb_nodos"}
 
 st.markdown("""
@@ -68,9 +68,13 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 """, unsafe_allow_html=True)
 
 # ── Inicialización SEGURA de sesión ──
+# FIX PERFORMANCE: data_version como contador de invalidación de caché.
+# Reemplaza load_data_rango.clear() que borraba TODO el caché.
+# Ahora solo la nueva versión consulta la BD; versiones antiguas (otros meses) siguen cacheadas.
 _sesion_defaults = {
     'form_reset': 0, 'logged_in': False, 'role': '', 'username': '',
-    'log_u': '', 'log_p': '', 'log_err': '', 'flash_msg': '', 'flash_type': ''
+    'log_u': '', 'log_p': '', 'log_err': '', 'flash_msg': '', 'flash_type': '',
+    'data_version': 0,
 }
 for _k, _v in _sesion_defaults.items():
     if _k not in st.session_state:
@@ -83,6 +87,14 @@ if st.session_state.flash_msg:
         st.toast(st.session_state.flash_msg, icon="✅")
     st.session_state.flash_msg  = ""
     st.session_state.flash_type = ""
+
+# Shorthand para el contador de versión (se usa en todas las llamadas a load_data_rango)
+def _dv() -> int:
+    return st.session_state.get('data_version', 0)
+
+def _invalidar_cache():
+    """Incrementa el contador de versión. Fuerza re-fetch solo de los datos actuales."""
+    st.session_state.data_version = _dv() + 1
 
 # =====================================================================
 # BASE DE DATOS Y ARQUITECTURA RELACIONAL
@@ -99,8 +111,7 @@ def hash_pw(p: str) -> str:
 def check_pw(p: str, h: str) -> bool:
     return bcrypt.checkpw(p.encode(), h.encode())
 
-# ── FIX: Validación de contraseña segura ──
-def validar_password(p: str) -> str | None:
+def validar_password(p: str):
     """Retorna None si es válida, o el mensaje de error."""
     if len(p) < 8:
         return "La contraseña debe tener al menos 8 caracteres."
@@ -160,7 +171,6 @@ def get_zonas() -> list:
     except Exception:
         return list(DEFAULT_ZONAS)
 
-# FIX: whitelist de tablas para evitar SQL injection
 @st.cache_data(ttl=300, show_spinner=False)
 def get_cat(tabla: str) -> list:
     if tabla not in _ALLOWED_TABLES:
@@ -182,8 +192,10 @@ def get_causas_con_flag() -> dict:
 def clear_catalog_cache():
     get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear()
 
+# FIX PERFORMANCE: cache_version como parámetro para invalidación granular.
+# Solo la versión nueva consulta la BD; el resto del caché se mantiene.
 @st.cache_data(ttl=300, show_spinner=False)
-def get_all_cmdb_nodos() -> dict:
+def get_all_cmdb_nodos(cache_version: int = 0) -> dict:
     try:
         with engine.connect() as conn:
             res = conn.execute(text("SELECT zona, equipo, clientes FROM cmdb_nodos")).fetchall()
@@ -191,47 +203,52 @@ def get_all_cmdb_nodos() -> dict:
     except Exception:
         return {}
 
-# FIX: comparación corregida (zona.lower() in z, no z in zona.lower())
+# FIX BUG: comparación exacta (zona.lower() == z) en vez de substring.
+# Antes: "z in zona.lower()" podía dar falso positivo (ej. "la" in "la libertad").
 def get_clientes_cmdb(zona: str, equipo: str) -> int:
     if zona == "San Salvador (Central)":
         return 0
-    cmdb = get_all_cmdb_nodos()
+    zona_l = zona.lower()
+    equipo_l = equipo.lower()
+    cmdb = get_all_cmdb_nodos(cache_version=_dv())
     for (z, e), clientes in cmdb.items():
-        if zona.lower() in z and e == equipo.lower():
+        if z == zona_l and e == equipo_l:
             return clientes
     return 0
 
 # =====================================================================
 # CARGA Y ENRIQUECIMIENTO
 # =====================================================================
+# FIX PERFORMANCE: cache_version como parámetro de caché.
+# Antes: load_data_rango.clear() borraba TODO el caché (todos los meses, todos los filtros).
+# Ahora: _invalidar_cache() solo incrementa el contador; meses no activos siguen cacheados.
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(
     fecha_ini: date, fecha_fin: date, include_deleted: bool = False,
-    zona_filtro: str = "Todas", serv_filtro: str = "Todos", seg_filtro: str = "Todos"
+    zona_filtro: str = "Todas", serv_filtro: str = "Todos", seg_filtro: str = "Todos",
+    cache_version: int = 0,
 ) -> pd.DataFrame:
     s_date = datetime.combine(fecha_ini, datetime_time(0, 0, 0))
     e_date = datetime.combine(fecha_fin, datetime_time(23, 59, 59))
 
-    # FIX: parámetros SQL separados para evitar inyección en filtros de zona/servicio/segmento
     params: dict = {"s": s_date, "e": e_date}
+    # FIX BUG: la 4ª condición original duplicaba la 1ª para tickets abiertos.
+    # Corrección: incluir tickets abiertos que iniciaron en cualquier momento hasta el fin del rango.
     conds = [
         "(  (inicio_incidente >= :s AND inicio_incidente <= :e)"
         "  OR (fin_incidente   >= :s AND fin_incidente   <= :e)"
         "  OR (inicio_incidente <= :s AND fin_incidente  >= :e)"
-        "  OR (inicio_incidente >= :s AND inicio_incidente <= :e AND estado = 'Abierto')"
+        "  OR (inicio_incidente <= :e AND estado = 'Abierto')"
         ")"
     ]
     conds.append("deleted_at IS NULL" if not include_deleted else "deleted_at IS NOT NULL")
 
     if zona_filtro != "Todas":
-        conds.append("zona = :zona_f")
-        params["zona_f"] = zona_filtro
+        conds.append("zona = :zona_f");  params["zona_f"] = zona_filtro
     if serv_filtro != "Todos":
-        conds.append("servicio = :serv_f")
-        params["serv_f"] = serv_filtro
-    if seg_filtro != "Todos":
-        conds.append("categoria = :seg_f")
-        params["seg_f"] = seg_filtro
+        conds.append("servicio = :serv_f"); params["serv_f"] = serv_filtro
+    if seg_filtro  != "Todos":
+        conds.append("categoria = :seg_f"); params["seg_f"] = seg_filtro
 
     q = "SELECT * FROM incidents WHERE " + " AND ".join(conds) + " ORDER BY inicio_incidente ASC"
     try:
@@ -240,15 +257,14 @@ def load_data_rango(
     except Exception:
         return pd.DataFrame()
 
-# FIX: enriquecer nunca destruye el schema; columnas calculadas vacías correctas cuando df está vacío
+# FIX BUG (schema preservation): enriquecer nunca destruye el schema aunque el df esté vacío.
+# Antes: devolvía pd.DataFrame() sin columnas → cualquier df['col'] en los tabs explotaba.
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df is None:
         return pd.DataFrame()
-
     df = df.copy()
     df.columns = [c.lower() for c in df.columns]
 
-    # Normalizar columnas numéricas siempre, aunque esté vacío
     if 'duracion_horas' in df.columns:
         df['duracion_horas'] = pd.to_numeric(df['duracion_horas'], errors='coerce').fillna(0.0)
     else:
@@ -259,14 +275,13 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     else:
         df['clientes_afectados'] = pd.Series(dtype='int64')
 
-    # Si está vacío, agregar columnas calculadas vacías con tipos correctos y salir
+    # Si vacío: columnas calculadas vacías con tipos correctos, salir sin procesar
     if df.empty:
         df['Severidad']     = pd.Series(dtype='object')
         df['es_externa']    = pd.Series(dtype='bool')
         df['zona_completa'] = pd.Series(dtype='object')
         return df
 
-    # Conversión de timestamps
     if 'inicio_incidente' in df.columns:
         df['inicio_incidente'] = pd.to_datetime(df['inicio_incidente'], errors='coerce', utc=True)
         m_ini = df['inicio_incidente'].notnull()
@@ -329,7 +344,6 @@ def calc_kpis(df: pd.DataFrame, fecha_ini: date, fecha_fin: date) -> dict:
         return base
 
     base["abiertos"] = int((df['estado'] == 'Abierto').sum())
-
     df_cerrados = df[(df['estado'] == 'Cerrado') & df['inicio_incidente'].notnull()]
     df_int = df_cerrados[df_cerrados['categoria'] == CAT_INTERNA]
     df_ext = df_cerrados[df_cerrados['categoria'] != CAT_INTERNA]
@@ -401,7 +415,6 @@ def dibujar_graficos(df_m: pd.DataFrame):
 
     st.markdown("### 🗺️ Análisis Geográfico y Temporal")
     zonas_coords = {z[0]: (z[1], z[2]) for z in get_zonas()}
-
     df_map = df_m.copy()
     df_map['lat'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[0])
     df_map['lon'] = df_map['zona'].map(lambda x: zonas_coords.get(x, (13.6929, -89.2182))[1])
@@ -583,7 +596,6 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame) -> bytes:
 
 # =====================================================================
 # LOGIN SEGURO
-# FIX: orden correcto de verificaciones (ban → bloqueo temporal → contraseña)
 # =====================================================================
 def do_login():
     u, p = st.session_state.log_u, st.session_state.log_p
@@ -663,7 +675,8 @@ with st.sidebar:
     srv_sel = st.selectbox("🌐 Servicio", ["Todos"]  + get_cat("cat_servicios"))
     seg_sel = st.selectbox("🏢 Segmento", ["Todos"]  + list(DEFAULT_CATEGORIAS))
 
-    df_m = enriquecer(load_data_rango(fecha_ini, fecha_fin, False, z_sel, srv_sel, seg_sel))
+    # FIX PERFORMANCE: cache_version en vez de clear() global
+    df_m = enriquecer(load_data_rango(fecha_ini, fecha_fin, False, z_sel, srv_sel, seg_sel, cache_version=_dv()))
 
     st.divider()
     if not df_m.empty:
@@ -712,9 +725,9 @@ with tabs[t_idx]:
         p_a_sel = a_sel - 1 if m_idx == 1 else a_sel
         p_fi    = date(p_a_sel, p_m_idx, 1)
         p_ff    = date(p_a_sel, p_m_idx, calendar.monthrange(p_a_sel, p_m_idx)[1])
-        df_prev = enriquecer(load_data_rango(p_fi, p_ff, False, z_sel, srv_sel, seg_sel))
+        df_prev = enriquecer(load_data_rango(p_fi, p_ff, False, z_sel, srv_sel, seg_sel, cache_version=_dv()))
 
-        kpis      = calc_kpis(df_m,   fecha_ini, fecha_fin)
+        kpis      = calc_kpis(df_m,    fecha_ini, fecha_fin)
         kpis_prev = calc_kpis(df_prev, p_fi, p_ff) if not df_prev.empty else None
 
         def _delta(cat, key, divisor=1, fmt="{:+.2f}", suffix=""):
@@ -756,6 +769,9 @@ with tabs[t_idx]:
         zonas_activas = [z[0] for z in get_zonas()]
         sla_data      = [{"Zona": z, "SLA (%)": kpis['zonas_sla'].get(z, 100.0)} for z in zonas_activas]
         df_sla_geo    = pd.DataFrame(sla_data).sort_values("SLA (%)", ascending=True)
+
+        # FIX BUG: .min() en df vacío devolvería NaN; fallback seguro
+        sla_min = df_sla_geo["SLA (%)"].min() if not df_sla_geo.empty else 98.0
         fig_sla = px.bar(
             df_sla_geo, x="SLA (%)", y="Zona", orientation='h',
             text_auto='.3f', color="SLA (%)",
@@ -763,7 +779,7 @@ with tabs[t_idx]:
             title="Ranking de Estabilidad Geográfica"
         )
         fig_sla.update_layout(
-            xaxis=dict(range=[max(0, df_sla_geo["SLA (%)"].min()-2), 100.5]),
+            xaxis=dict(range=[max(0, sla_min - 2), 100.5]),
             margin=dict(l=0,r=0,t=40,b=0), paper_bgcolor="rgba(0,0,0,0)", height=350
         )
         st.plotly_chart(fig_sla, use_container_width=True)
@@ -818,9 +834,9 @@ if role in ('admin', 'auditor'):
                 st.divider()
 
                 c1f, c2f = st.columns(2)
-                srv_f = c1f.selectbox("🌐 Servicio",  servs_form,         key=f"s_{fk}")
+                srv_f = c1f.selectbox("🌐 Servicio",  servs_form,              key=f"s_{fk}")
                 cat_f = c2f.selectbox("🏢 Segmento",  list(DEFAULT_CATEGORIAS), key=f"c_{fk}")
-                eq_f  = st.selectbox("🖥️ Equipo",     equipos_form,       key=f"e_{fk}")
+                eq_f  = st.selectbox("🖥️ Equipo",     equipos_form,            key=f"e_{fk}")
                 d_cl  = get_clientes_cmdb(z_f, eq_f)
                 st.divider()
 
@@ -917,8 +933,8 @@ if role in ('admin', 'auditor'):
                                         """), {"z": z_f, "e": eq_f, "cl": cl_f})
 
                                 log_audit("INSERT", f"Falla ({estado_db}) en {z_f}")
-                                load_data_rango.clear()
-                                get_all_cmdb_nodos.clear()
+                                # FIX PERFORMANCE: invalidación granular en vez de clear() total
+                                _invalidar_cache()
                                 st.session_state.form_reset += 1
                                 st.session_state.flash_msg  = "✅ Registro guardado exitosamente."
                                 st.session_state.flash_type = "success"
@@ -941,13 +957,16 @@ if role in ('admin', 'auditor'):
     t_idx += 1
 
 # ─────────────────────────────────────────────
-# TAB 2 — HISTORIAL Y EDICIÓN (mejorado)
+# TAB 2 — HISTORIAL Y EDICIÓN
+# CAMBIO: menú simplificado — solo eliminar/restaurar en expander;
+# edición directa desde la tabla (data_editor), sin sección "Editar por ID".
 # ─────────────────────────────────────────────
 if role in ('admin', 'auditor'):
     with tabs[t_idx]:
         st.markdown("### 🗂️ Historial, Auditoría y Edición")
 
         # ── Cierre rápido de tickets abiertos ──
+        # FIX BUG: verificar columna 'estado' antes de filtrar (df puede estar vacío sin esa columna)
         df_abiertos = df_m[df_m['estado'] == 'Abierto'] if ('estado' in df_m.columns and not df_m.empty) else pd.DataFrame()
 
         if not df_abiertos.empty:
@@ -961,7 +980,7 @@ if role in ('admin', 'auditor'):
                             return 'Sin hora'
 
                     t_opts = {
-                        r['id']: f"ID: {r['id']} | Nodo: {r.get('zona_completa', r.get('zona',''))} | Inicio: {_fmt_inicio(r.get('inicio_incidente'))}"
+                        r['id']: f"ID: {r['id']} | Nodo: {r.get('zona_completa', r.get('zona',''))} | Inicio: {_fmt_inicio(r['inicio_incidente'])}"
                         for _, r in df_abiertos.iterrows()
                     }
                     sel_t  = st.selectbox("Selecciona la Falla a Cerrar", options=list(t_opts.keys()), format_func=lambda x: t_opts[x])
@@ -970,13 +989,13 @@ if role in ('admin', 'auditor'):
                     h_fin  = c_fc2.time_input("🕒 Hora Exacta de Restablecimiento")
 
                     if st.form_submit_button("✅ Cerrar Ticket", type="primary"):
-                        # FIX: usar indexación directa en lugar de .get() en pd.Series
+                        # FIX BUG: usar indexación directa df['col'] en pd.Series, no .get()
                         r_orig     = df_abiertos[df_abiertos['id'] == sel_t].iloc[0]
                         ini_dt     = r_orig['inicio_incidente']
                         fin_dt_val = SV_TZ.localize(datetime.combine(f_fin, h_fin))
 
                         if pd.isnull(ini_dt):
-                            st.error("❌ Este ticket no tiene hora de inicio registrada. Edítalo manualmente.")
+                            st.error("❌ Este ticket no tiene hora de inicio registrada. Edítalo manualmente en la tabla.")
                         elif fin_dt_val < ini_dt:
                             st.error("❌ La fecha/hora de cierre no puede ser menor a la de inicio.")
                         else:
@@ -987,21 +1006,19 @@ if role in ('admin', 'auditor'):
                                     {"f": fin_dt_val, "d": dur_h, "id": sel_t}
                                 )
                             log_audit("CLOSE TICKET", f"Ticket ID {sel_t} cerrado exitosamente.")
-                            load_data_rango.clear()
+                            _invalidar_cache()
                             st.session_state.flash_msg  = "✅ Ticket cerrado correctamente."
                             st.session_state.flash_type = "success"
                             st.rerun()
 
         st.divider()
 
-        # ── Modo Papelera o Vista Normal ──
         papelera = st.toggle("🗑️ Explorar Papelera de Reciclaje")
-        df_audit = enriquecer(load_data_rango(fecha_ini, fecha_fin, papelera, "Todas", "Todos", "Todos"))
+        df_audit = enriquecer(load_data_rango(fecha_ini, fecha_fin, papelera, "Todas", "Todos", "Todos", cache_version=_dv()))
 
         if df_audit.empty:
             st.info("No hay datos en el servidor para el periodo.")
         else:
-            # ── Buscador y paginación ──
             c_s, c_pg = st.columns([4, 1])
             bq = c_s.text_input("🔎 Buscar:", placeholder="Causa, nodo, equipo…")
             df_d = (df_audit[df_audit.astype(str)
@@ -1009,190 +1026,172 @@ if role in ('admin', 'auditor'):
                     .any(axis=1)].copy()
                     if bq else df_audit.copy())
 
-            tot_p   = max(1, math.ceil(len(df_d)/15))
+            tot_p   = max(1, math.ceil(len(df_d) / 15))
             pg      = c_pg.number_input("Página", 1, tot_p, 1, key="p_bd")
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
 
             drop_cols = ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje']
 
-            # ── NUEVA UI: Panel de acciones más clara ──
-            st.markdown("---")
-
-            # ── Sección 1: Eliminar / Restaurar registros ──
+            # ── Sección 1: ELIMINAR / RESTAURAR (expander simplificado) ──
             with st.expander(
-                "🗑️ Eliminar Registros (Papelera)" if not papelera else "♻️ Restaurar / Eliminar Permanentemente",
+                "🗑️ Mover Registros a la Papelera" if not papelera else "♻️ Restaurar o Eliminar Registros",
                 expanded=False
             ):
-                if papelera:
-                    st.info("📌 Estás en la **Papelera de Reciclaje**. Selecciona registros para restaurarlos o eliminarlos definitivamente.")
-                else:
-                    st.info("📌 Ingresa el **ID** del registro que deseas eliminar (mover a la Papelera). Puedes buscar el ID en la tabla de abajo.")
+                ids_disponibles = df_d['id'].tolist() if 'id' in df_d.columns else []
+
+                def _label_id(x):
+                    fila = df_d[df_d['id'] == x]
+                    if fila.empty: return f"ID {x}"
+                    zona_v   = fila['zona'].values[0]  if 'zona'      in fila.columns else ''
+                    causa_v  = fila['causa_raiz'].values[0] if 'causa_raiz' in fila.columns else ''
+                    return f"ID {x} · {zona_v} · {str(causa_v)[:25]}"
 
                 if papelera:
-                    # Selector múltiple para restaurar o eliminar permanentemente
-                    ids_papelera = df_d['id'].tolist() if 'id' in df_d.columns else []
-                    sel_ids_pap = st.multiselect(
-                        "Selecciona registros (por ID)",
-                        options=ids_papelera,
-                        format_func=lambda x: f"ID {x} · {df_d[df_d['id']==x]['zona'].values[0] if not df_d[df_d['id']==x].empty else ''} · {df_d[df_d['id']==x]['causa_raiz'].values[0] if not df_d[df_d['id']==x].empty else ''}",
-                        key="sel_pap_ids"
-                    )
-                    col_rest, col_perm = st.columns(2)
-                    if sel_ids_pap:
+                    st.info("📌 Selecciona registros de la papelera para **restaurarlos** o **eliminarlos permanentemente**.")
+                    sel_ids = st.multiselect("Selecciona registros (por ID)", options=ids_disponibles, format_func=_label_id, key="sel_pap_ids")
+                    if sel_ids:
+                        col_rest, col_perm = st.columns(2)
                         if col_rest.button("♻️ Restaurar Seleccionados", type="primary", use_container_width=True):
                             with engine.begin() as conn:
-                                for rid in sel_ids_pap:
+                                for rid in sel_ids:
                                     conn.execute(text("UPDATE incidents SET deleted_at=NULL WHERE id=:id"), {"id": int(rid)})
-                            log_audit("RESTORE", f"{len(sel_ids_pap)} registro(s) restaurados.")
-                            load_data_rango.clear()
+                            log_audit("RESTORE", f"{len(sel_ids)} registro(s) restaurados.")
+                            _invalidar_cache()
                             st.session_state.flash_msg  = "♻️ Registros restaurados correctamente."
                             st.session_state.flash_type = "success"
                             st.rerun()
-
                         if col_perm.button("🔥 Eliminar Permanentemente", use_container_width=True):
                             with engine.begin() as conn:
-                                for rid in sel_ids_pap:
+                                for rid in sel_ids:
                                     conn.execute(text("DELETE FROM incidents WHERE id=:id"), {"id": int(rid)})
-                            log_audit("DELETE PERMANENT", f"{len(sel_ids_pap)} registro(s) eliminados permanentemente.")
-                            load_data_rango.clear()
+                            log_audit("DELETE PERMANENT", f"{len(sel_ids)} registro(s) eliminados permanentemente.")
+                            _invalidar_cache()
                             st.session_state.flash_msg  = "🔥 Registros eliminados permanentemente."
                             st.session_state.flash_type = "success"
                             st.rerun()
                     else:
                         st.caption("Selecciona al menos un registro para habilitar las acciones.")
                 else:
-                    ids_activos = df_d['id'].tolist() if 'id' in df_d.columns else []
-                    sel_ids_del = st.multiselect(
-                        "Selecciona registros a mover a la papelera (por ID)",
-                        options=ids_activos,
-                        format_func=lambda x: f"ID {x} · {df_d[df_d['id']==x]['zona'].values[0] if not df_d[df_d['id']==x].empty else ''} · {df_d[df_d['id']==x]['causa_raiz'].values[0] if not df_d[df_d['id']==x].empty else ''}",
-                        key="sel_del_ids"
-                    )
-                    if sel_ids_del:
+                    st.info("📌 Selecciona registros para moverlos a la papelera (eliminación reversible).")
+                    sel_ids = st.multiselect("Selecciona registros (por ID)", options=ids_disponibles, format_func=_label_id, key="sel_del_ids")
+                    if sel_ids:
                         if st.button("🗑️ Mover a Papelera", type="primary", use_container_width=True):
                             with engine.begin() as conn:
-                                for rid in sel_ids_del:
+                                for rid in sel_ids:
                                     conn.execute(text("UPDATE incidents SET deleted_at=CURRENT_TIMESTAMP WHERE id=:id"), {"id": int(rid)})
-                            log_audit("DELETE (SOFT)", f"{len(sel_ids_del)} registro(s) movidos a papelera.")
-                            load_data_rango.clear()
+                            log_audit("DELETE (SOFT)", f"{len(sel_ids)} registro(s) movidos a papelera.")
+                            _invalidar_cache()
                             st.session_state.flash_msg  = "🗑️ Registros movidos a la papelera."
                             st.session_state.flash_type = "success"
                             st.rerun()
                     else:
                         st.caption("Selecciona al menos un registro para habilitar la acción.")
 
-            # ── Sección 2: Edición individual por ID ──
-            with st.expander("✏️ Editar un Registro Específico por ID", expanded=False):
-                st.info("📌 Ingresa el ID del registro que deseas editar. Puedes consultar el ID en la tabla de abajo.")
-                ids_disponibles = df_d['id'].tolist() if 'id' in df_d.columns else []
+            st.divider()
 
-                if not ids_disponibles:
-                    st.warning("No hay registros disponibles para editar.")
-                else:
-                    id_editar = st.selectbox(
-                        "ID del Registro a Editar",
-                        options=ids_disponibles,
-                        format_func=lambda x: f"ID {x} · {df_d[df_d['id']==x]['zona'].values[0] if not df_d[df_d['id']==x].empty else ''} · {df_d[df_d['id']==x]['causa_raiz'].values[0] if not df_d[df_d['id']==x].empty else ''}",
-                        key="id_editar_sel"
-                    )
-                    r_edit_df = df_d[df_d['id'] == id_editar]
-                    if not r_edit_df.empty:
-                        r_edit = r_edit_df.iloc[0]
-                        with st.form("form_edicion_individual"):
-                            st.markdown(f"**✏️ Editando Registro ID: {id_editar}**")
-                            ec1, ec2 = st.columns(2)
-                            zonas_ed   = [z[0] for z in get_zonas()]
-                            causas_ed  = list(get_causas_con_flag().keys())
-                            servicios_ed = get_cat("cat_servicios")
-                            equipos_ed   = get_cat("cat_equipos")
+            # ── Sección 2: EDICIÓN DIRECTA DESDE LA TABLA (data_editor) ──
+            st.markdown("#### ✏️ Edición Directa de Registros")
+            st.info("⚠️ Edita las celdas directamente y presiona **💾 Guardar Ediciones Manuales** para confirmar. Asegúrate de guardar antes de cambiar de página.")
 
-                            zona_idx = zonas_ed.index(r_edit['zona']) if r_edit['zona'] in zonas_ed else 0
-                            new_zona = ec1.selectbox("📍 Zona", zonas_ed, index=zona_idx)
+            # Referencia limpia (sin columnas visuales ni calculadas)
+            ref_df = df_page.drop(columns=drop_cols, errors='ignore').reset_index(drop=True)
 
-                            causa_idx = causas_ed.index(r_edit['causa_raiz']) if r_edit.get('causa_raiz') in causas_ed else 0
-                            new_causa = ec2.selectbox("🛠️ Causa Raíz", causas_ed, index=causa_idx)
-
-                            serv_idx = servicios_ed.index(r_edit['servicio']) if r_edit.get('servicio') in servicios_ed else 0
-                            new_serv = ec1.selectbox("🌐 Servicio", servicios_ed, index=serv_idx)
-
-                            cat_idx = list(DEFAULT_CATEGORIAS).index(r_edit['categoria']) if r_edit.get('categoria') in DEFAULT_CATEGORIAS else 0
-                            new_cat  = ec2.selectbox("🏢 Segmento", list(DEFAULT_CATEGORIAS), index=cat_idx)
-
-                            eq_idx = equipos_ed.index(r_edit['equipo_afectado']) if r_edit.get('equipo_afectado') in equipos_ed else 0
-                            new_eq = st.selectbox("🖥️ Equipo", equipos_ed, index=eq_idx)
-
-                            new_cl = st.number_input("👤 Clientes Afectados", min_value=0, value=int(r_edit.get('clientes_afectados', 0)))
-                            new_desc = st.text_area("📝 Descripción", value=str(r_edit.get('descripcion', '') or ''))
-
-                            ed1, ed2 = st.columns(2)
-                            ini_val = r_edit['inicio_incidente']
-                            fin_val = r_edit.get('fin_incidente')
-
-                            new_fi = ed1.date_input("📅 Fecha Inicio", value=ini_val.date() if pd.notnull(ini_val) else date.today())
-                            new_hi = ed1.time_input("🕒 Hora Inicio",  value=ini_val.time() if pd.notnull(ini_val) else datetime_time(0,0))
-
-                            tiene_cierre = pd.notnull(fin_val)
-                            new_ff = ed2.date_input("📅 Fecha Cierre", value=fin_val.date() if tiene_cierre else date.today())
-                            new_hf = ed2.time_input("🕒 Hora Cierre",  value=fin_val.time() if tiene_cierre else datetime_time(0,0))
-                            tiene_fin_check = ed2.checkbox("✅ Registrar hora de cierre", value=tiene_cierre)
-
-                            if st.form_submit_button("💾 Guardar Cambios", type="primary"):
-                                try:
-                                    new_ini_dt = SV_TZ.localize(datetime.combine(new_fi, new_hi))
-                                    if tiene_fin_check:
-                                        new_fin_dt = SV_TZ.localize(datetime.combine(new_ff, new_hf))
-                                        if new_fin_dt <= new_ini_dt:
-                                            st.error("❌ La fecha de cierre debe ser posterior al inicio.")
-                                            st.stop()
-                                        new_dur = max(0.01, round((new_fin_dt - new_ini_dt).total_seconds()/3600, 2))
-                                        new_con = "Total"; new_est = "Cerrado"
-                                    else:
-                                        new_fin_dt = None; new_dur = 0.0; new_con = "Parcial"; new_est = "Abierto"
-
-                                    with engine.begin() as conn:
-                                        conn.execute(text("""
-                                            UPDATE incidents SET zona=:z, servicio=:s, categoria=:c, equipo_afectado=:e,
-                                                estado=:est, inicio_incidente=:idi, fin_incidente=:idf,
-                                                clientes_afectados=:cl, causa_raiz=:cr, descripcion=:d,
-                                                duracion_horas=:dur, conocimiento_tiempos=:con
-                                            WHERE id=:id
-                                        """), {"z": new_zona, "s": new_serv, "c": new_cat, "e": new_eq,
-                                               "est": new_est, "idi": new_ini_dt, "idf": new_fin_dt,
-                                               "cl": new_cl, "cr": new_causa, "d": new_desc,
-                                               "dur": new_dur, "con": new_con, "id": int(id_editar)})
-                                    log_audit("UPDATE", f"Edición individual del registro ID {id_editar}.")
-                                    load_data_rango.clear()
-                                    st.session_state.flash_msg  = f"💾 Registro ID {id_editar} actualizado correctamente."
-                                    st.session_state.flash_type = "success"
-                                    st.rerun()
-                                except Exception as ex:
-                                    st.error(f"❌ Error al guardar: {ex}")
-
-            st.markdown("---")
-
-            # ── Tabla de visualización (solo lectura, referencia) ──
-            st.markdown("#### 📋 Tabla de Registros del Periodo")
-            st.caption("Consulta aquí los IDs y datos de cada registro para usar en las acciones de arriba.")
-
-            cols_mostrar = [c for c in df_page.columns if c not in drop_cols + ['deleted_at']]
-            st.dataframe(
-                df_page[cols_mostrar],
-                use_container_width=True,
-                hide_index=True,
+            ed_df = st.data_editor(
+                ref_df,
                 column_config={
-                    "id":               st.column_config.NumberColumn("🆔 ID", width="small"),
+                    "id":               st.column_config.NumberColumn("🆔 ID", disabled=True, width="small"),
                     "zona":             st.column_config.TextColumn("📍 Zona"),
-                    "estado":           st.column_config.TextColumn("🚦 Estado"),
-                    "causa_raiz":       st.column_config.TextColumn("🛠️ Causa"),
-                    "inicio_incidente": st.column_config.DatetimeColumn("🕐 Inicio", format="DD/MM/YYYY HH:mm"),
-                    "fin_incidente":    st.column_config.DatetimeColumn("🕑 Fin",    format="DD/MM/YYYY HH:mm"),
-                    "duracion_horas":   st.column_config.NumberColumn("⏱️ Horas",  format="%.2f"),
+                    "estado":           st.column_config.SelectboxColumn("🚦 Estado", options=["Cerrado","Abierto"]),
+                    "inicio_incidente": st.column_config.DatetimeColumn("🕐 Inicio", format="YYYY-MM-DD HH:mm"),
+                    "fin_incidente":    st.column_config.DatetimeColumn("🕑 Fin",    format="YYYY-MM-DD HH:mm"),
                     "clientes_afectados": st.column_config.NumberColumn("👥 Clientes"),
-                    "Severidad":        None,
-                    "zona_completa":    None,
-                    "es_externa":       None,
-                }
+                    "duracion_horas":   st.column_config.NumberColumn("⏱️ Horas", format="%.2f"),
+                    "descripcion":      st.column_config.TextColumn("📝 Descripción", width="large"),
+                },
+                use_container_width=True, hide_index=True,
+                key="editor_incidentes_v11"
             )
+
+            # FIX BUG: helper para quitar timezone de forma segura en comparaciones
+            def strip_tz(s: pd.Series) -> pd.Series:
+                if pd.api.types.is_datetime64_any_dtype(s):
+                    return s.dt.tz_convert(None) if (hasattr(s.dt, 'tz') and s.dt.tz) else s
+                return s
+
+            # FIX BUG: comparar usando reset_index en ambos lados para alinear índices correctamente
+            ed_cmp  = ed_df.reset_index(drop=True).copy().apply(strip_tz)
+            ref_cmp = ref_df.reset_index(drop=True).copy().apply(strip_tz)
+            h_cam   = not ref_cmp.equals(ed_cmp)
+
+            if h_cam:
+                if st.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
+                    # FIX BUG: validar que inicio_incidente no sea nulo antes de guardar
+                    filas_invalidas = [
+                        i for i, (_, r) in enumerate(ed_df.iterrows())
+                        if not strip_tz(ref_df.iloc[i]).equals(strip_tz(r)) and pd.isnull(r.get('inicio_incidente'))
+                    ]
+                    if filas_invalidas:
+                        st.session_state.flash_msg  = "❌ Error: 'Fecha de Inicio' es obligatoria en todas las filas editadas."
+                        st.session_state.flash_type = "error"
+                        st.rerun()
+                    else:
+                        with engine.begin() as conn:
+                            # FIX BUG: usar enumerate para alinear índices entre ed_df y ref_df
+                            for i, (_, r) in enumerate(ed_df.iterrows()):
+                                orig_row = ref_df.iloc[i]
+                                if strip_tz(orig_row).equals(strip_tz(r)):
+                                    continue  # sin cambios en esta fila
+                                try:
+                                    ini_dt = pd.to_datetime(r.get('inicio_incidente'))
+                                    if pd.isnull(r.get('fin_incidente')):
+                                        fin_dt_sql = None; dur_u = 0.0; con_u = "Parcial"; est_u = "Abierto"
+                                    else:
+                                        fin_dt     = pd.to_datetime(r.get('fin_incidente'))
+                                        fin_dt_sql = fin_dt
+                                        dur_u      = max(0.01, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
+                                        con_u      = "Total"; est_u = "Cerrado"
+                                except Exception:
+                                    fin_dt_sql = None; dur_u = 0.0; con_u = "Parcial"; est_u = "Abierto"
+
+                                # FIX BUG: conversión robusta de clientes_afectados
+                                try:
+                                    cl_val = r.get('clientes_afectados', 0)
+                                    cl_val = int(float(cl_val)) if pd.notnull(cl_val) and str(cl_val).strip() != '' else 0
+                                except Exception:
+                                    cl_val = 0
+
+                                # FIX BUG: id nunca debe ser None; saltar si lo es
+                                row_id = r.get('id')
+                                if pd.isnull(row_id):
+                                    continue
+
+                                conn.execute(text("""
+                                    UPDATE incidents SET zona=:z, subzona=:sz, afectacion_general=:ag,
+                                        servicio=:s, categoria=:c, equipo_afectado=:e, estado=:est,
+                                        inicio_incidente=:idi, fin_incidente=:idf, clientes_afectados=:cl,
+                                        causa_raiz=:cr, descripcion=:d, duracion_horas=:dur,
+                                        conocimiento_tiempos=:con WHERE id=:id
+                                """), {
+                                    "z":   str(r.get('zona', '')),
+                                    "sz":  str(r.get('subzona', '')),
+                                    "ag":  bool(r.get('afectacion_general', True)),
+                                    "s":   str(r.get('servicio', '')),
+                                    "c":   str(r.get('categoria', '')),
+                                    "e":   str(r.get('equipo_afectado', '')),
+                                    "est": est_u,
+                                    "idi": ini_dt, "idf": fin_dt_sql,
+                                    "cl":  cl_val,
+                                    "cr":  str(r.get('causa_raiz', '')),
+                                    "d":   str(r.get('descripcion', '') or ''),
+                                    "dur": dur_u, "con": con_u,
+                                    "id":  int(row_id),
+                                })
+
+                        log_audit("UPDATE", "Edición masiva de registros a través de la tabla.")
+                        _invalidar_cache()
+                        st.session_state.flash_msg  = "💾 Cambios guardados correctamente."
+                        st.session_state.flash_type = "success"
+                        st.rerun()
 
             st.divider()
             st.download_button(
@@ -1313,7 +1312,6 @@ if role == 'admin' and len(tabs) > t_idx:
             st.info("🔒 **Política de contraseñas:** Mínimo 8 caracteres · Una mayúscula · Una minúscula · Un número · Un carácter especial (!@#$%...)")
             cu, clg = st.columns([1, 2], gap="large")
             with cu:
-                # ── Crear usuario con validación de contraseña ──
                 with st.form("form_u", clear_on_submit=True):
                     st.markdown("**Crear Usuario**")
                     nu   = st.text_input("Usuario")
@@ -1338,7 +1336,6 @@ if role == 'admin' and len(tabs) > t_idx:
                                 else:
                                     st.toast(f"❌ Error interno: {str(e)}", icon="❌")
 
-                # ── Restablecer contraseña con validación ──
                 with st.form("form_reset_pw", clear_on_submit=True):
                     st.markdown("**Restablecer Contraseña**")
                     u_reset = st.text_input("Usuario exacto")
@@ -1379,7 +1376,7 @@ if role == 'admin' and len(tabs) > t_idx:
                             "failed_attempts": "Intentos Fallidos",
                         },
                         use_container_width=True, hide_index=True,
-                        key="editor_usuarios_v10"
+                        key="editor_usuarios_v11"
                     )
                     filas_del   = ed_usrs[ed_usrs["Sel"] == True]
                     hay_cambios = not (df_usrs.drop(columns=['Sel'], errors='ignore').reset_index(drop=True)
@@ -1396,7 +1393,9 @@ if role == 'admin' and len(tabs) > t_idx:
                         else:
                             with engine.begin() as conn:
                                 for rid in filas_del['id']:
-                                    conn.execute(text("DELETE FROM users WHERE id=:id"), {"id": int(rid)})
+                                    # FIX BUG: null-safe cast de id
+                                    if pd.notnull(rid):
+                                        conn.execute(text("DELETE FROM users WHERE id=:id"), {"id": int(rid)})
                             st.session_state.flash_msg = "🗑️ Usuario eliminado."
                             st.rerun()
 
@@ -1405,10 +1404,14 @@ if role == 'admin' and len(tabs) > t_idx:
                             for i, er in ed_usrs.iterrows():
                                 orig = df_usrs.drop(columns=['Sel'], errors='ignore').iloc[i]
                                 if not orig.equals(er.drop('Sel', errors='ignore')):
+                                    # FIX BUG: null-safe cast de id antes de UPDATE
+                                    er_id = er.get('id')
+                                    if pd.isnull(er_id):
+                                        continue
                                     conn.execute(
                                         text("UPDATE users SET role=:r,is_banned=:b,failed_attempts=:f WHERE id=:id"),
                                         {"r": str(er.get('role', 'viewer')), "b": bool(er.get('is_banned', False)),
-                                         "f": int(er.get('failed_attempts', 0)), "id": int(er.get('id'))}
+                                         "f": int(er.get('failed_attempts', 0)), "id": int(er_id)}
                                     )
                         st.session_state.flash_msg = "💾 Permisos de usuario guardados."
                         st.rerun()
