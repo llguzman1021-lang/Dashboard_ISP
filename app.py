@@ -13,7 +13,7 @@ from reportlab.platypus import SimpleDocTemplate, Paragraph, Spacer, Table, Tabl
 from reportlab.lib.units import cm
 
 # =====================================================================
-# CONFIGURACIÓN GLOBAL Y CONSTANTES CORPORATIVAS
+# NOC v1.0 - VERSIÓN 6.0 (ANTI-CACHÉ Y BLINDADA)
 # =====================================================================
 st.set_page_config(page_title="Multinet NOC", layout="wide", page_icon="📊")
 SV_TZ = pytz.timezone('America/El_Salvador')
@@ -24,7 +24,6 @@ COLOR_TEAL      = '#29b09d'
 COLOR_DANGER    = '#ff2b2b'
 PALETA_CORP     = (COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER)
 
-# Constantes inmutables (Tuplas) para evitar errores de caché en Streamlit
 DEFAULT_ZONAS = (
     ("El Rosario", 13.4886, -89.0256), ("ARG", 13.4880, -89.3200), ("Tepezontes", 13.6214, -89.0125),
     ("La Libertad", 13.4883, -89.3200), ("El Tunco", 13.4930, -89.3830), ("Costa del Sol", 13.3039, -88.9450),
@@ -206,7 +205,7 @@ def load_data_rango(
     except:
         return pd.DataFrame()
 
-# NO usar caché aquí para evitar la pérdida de metadata de zonas horarias en Streamlit
+# 🚫 NO USAR CACHÉ AQUÍ PARA EVITAR LA DESAPARICIÓN DE COLUMNAS
 def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     if df is None or df.empty: return pd.DataFrame()
     df = df.copy()
@@ -364,7 +363,6 @@ def dibujar_graficos(df_m: pd.DataFrame):
             df_heat['inicio_incidente'].dt.dayofweek.map(dias_map),
             categories=dias_orden, ordered=True)
         df_heat['Hora'] = df_heat['inicio_incidente'].dt.hour
-        # FIX: observed=False para evitar advertencias de Pandas en agrupaciones categóricas
         df_hm = df_heat.groupby(['Día','Hora'], observed=False).size().reset_index(name='Fallas')
 
         fig_hm = px.density_heatmap(
@@ -958,10 +956,10 @@ if role in ('admin', 'auditor'):
             df_page = df_d.iloc[(pg-1)*15 : pg*15].copy()
             df_page.insert(0, "Sel", False)
 
+            # 🛡️ FIX BLINDADO: La lista de comprensión evita el KeyError de PyArrow
             drop_cols = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje']
                          if c in df_page.columns]
 
-            # 🛡️ FIX ABSOLUTO DEL KEYERROR: Cambio de nombre del "key" para limpiar el caché zombie de Streamlit
             ed_df = st.data_editor(
                 df_page.drop(columns=drop_cols, errors='ignore'),
                 column_config={
@@ -972,12 +970,14 @@ if role in ('admin', 'auditor'):
                     "fin_incidente":    st.column_config.DatetimeColumn("Fin",    format="YYYY-MM-DD HH:mm"),
                 },
                 use_container_width=True, hide_index=True,
-                key="editor_incidentes_final_v5"
+                key="editor_incidentes_v7_final"
             )
 
             f_sel  = ed_df[ed_df["Sel"] == True]
-            ref_df = (df_page.drop(columns=drop_cols + ['Sel'], errors='ignore')
-                      .reset_index(drop=True))
+            
+            # 🛡️ FIX SEGURO: Genera la lista de columnas exacta para que pandas no lance excepciones
+            cols_to_drop_ref = [c for c in drop_cols + ['Sel'] if c in df_page.columns]
+            ref_df = df_page.drop(columns=cols_to_drop_ref).reset_index(drop=True)
 
             def strip_tz(s):
                 if pd.api.types.is_datetime64_any_dtype(s):
@@ -1040,7 +1040,7 @@ if role in ('admin', 'auditor'):
                                 except:
                                     fin_dt_sql = None; dur_u = 0.0; con_u = "Parcial"; est_u = "Abierto"
 
-                                # 🛡️ FIX: Defensa contra celdas numéricas que se dejaron en blanco en la tabla
+                                # 🛡️ DEFENSA EXTRA: Evita colapsos si dejas una celda numérica en blanco
                                 try:
                                     cl_val = r.get('clientes_afectados', 0)
                                     cl_val = int(float(cl_val)) if pd.notnull(cl_val) and str(cl_val).strip() != '' else 0
@@ -1069,9 +1069,11 @@ if role in ('admin', 'auditor'):
                     st.rerun()
 
             st.divider()
+            # 🛡️ FIX BLINDADO FINAL: CSV Download no lanza KeyError si faltan columnas
+            cols_to_drop_csv = [c for c in ['deleted_at','Severidad','zona_completa','es_externa','impacto_porcentaje'] if c in df_d.columns]
             st.download_button(
                 "📥 Descargar CSV de esta Tabla",
-                df_d.drop(columns=drop_cols, errors='ignore').to_csv(index=False).encode(),
+                df_d.drop(columns=cols_to_drop_csv).to_csv(index=False).encode(),
                 f"NOC_Export_{fecha_ini}_{fecha_fin}.csv", "text/csv",
                 use_container_width=True
             )
@@ -1244,7 +1246,7 @@ if role == 'admin' and len(tabs) > t_idx:
                             "failed_attempts": "Intentos Fallidos",
                         },
                         use_container_width=True, hide_index=True,
-                        key="editor_usuarios_final_v5"
+                        key="editor_usuarios_final_v7"
                     )
                     filas_del   = ed_usrs[ed_usrs["Sel"] == True]
                     hay_cambios = not (df_usrs.drop(columns=['Sel']).reset_index(drop=True)
