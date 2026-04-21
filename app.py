@@ -2,7 +2,7 @@ import streamlit as st
 import pandas as pd
 import plotly.express as px
 import plotly.graph_objects as go
-import time, bcrypt, math, pytz, calendar, re
+import time, bcrypt, math, pytz, calendar, re, secrets
 from sqlalchemy import create_engine, text
 from datetime import datetime, timedelta, date, time as datetime_time
 from io import BytesIO
@@ -32,7 +32,7 @@ COLOR_TEAL      = '#29b09d'
 COLOR_DANGER    = '#ff2b2b'
 PALETA_CORP     = (COLOR_PRIMARY, COLOR_SECONDARY, COLOR_TEAL, '#ff9f43', '#83c9ff', COLOR_DANGER)
 
-# Nombre del super-admin raíz — protegido en múltiples capas
+# Super-admin protegido en múltiples capas
 SUPERADMIN_USERNAME = 'Admin'
 
 DEFAULT_ZONAS = (
@@ -79,12 +79,13 @@ button[data-baseweb="tab"][aria-selected="true"] p { color: #ffffff !important; 
 
 # ── Inicialización SEGURA de sesión ──
 # PERF: data_version como contador de invalidación granular de caché.
-# _invalidar_cache() solo incrementa el contador; otras versiones (otros meses)
-# siguen cacheadas. Evita borrar TODO el caché con .clear().
+# _invalidar_cache() solo incrementa el contador; versiones previas siguen
+# cacheadas. Evita borrar TODO el caché con .clear() en cada escritura.
+# FIX SEC: session_token para prevención de sesiones concurrentes.
 _sesion_defaults = {
     'form_reset': 0, 'logged_in': False, 'role': '', 'username': '',
     'log_u': '', 'log_p': '', 'log_err': '', 'flash_msg': '', 'flash_type': '',
-    'data_version': 0,
+    'data_version': 0, 'session_token': '',
 }
 for _k, _v in _sesion_defaults.items():
     if _k not in st.session_state:
@@ -102,7 +103,8 @@ def _dv() -> int:
     return st.session_state.get('data_version', 0)
 
 def _invalidar_cache():
-    """Invalida el caché de datos incrementando el contador de versión."""
+    """Invalida el caché de datos incrementando el contador de versión.
+    Solo la clave con el nuevo número consulta la BD; el resto sigue cacheado."""
     st.session_state.data_version = _dv() + 1
 
 # =====================================================================
@@ -137,6 +139,8 @@ def validar_password(p: str):
 def init_db():
     with engine.begin() as conn:
         conn.execute(text("CREATE TABLE IF NOT EXISTS users (id SERIAL PRIMARY KEY, username VARCHAR(50) UNIQUE, password_hash VARCHAR(255), role VARCHAR(20), failed_attempts INT DEFAULT 0, locked_until TIMESTAMP, is_banned BOOLEAN DEFAULT FALSE)"))
+        # FIX SEC: columna session_token para control de sesión única por usuario
+        conn.execute(text("ALTER TABLE users ADD COLUMN IF NOT EXISTS session_token VARCHAR(64) DEFAULT NULL"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS audit_logs (id SERIAL PRIMARY KEY, timestamp TIMESTAMP, username VARCHAR(50), action VARCHAR(50), details TEXT)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_zonas (id SERIAL PRIMARY KEY, nombre VARCHAR(150) UNIQUE NOT NULL, lat FLOAT DEFAULT 13.6929, lon FLOAT DEFAULT -89.2182)"))
         conn.execute(text("CREATE TABLE IF NOT EXISTS cat_equipos (id SERIAL PRIMARY KEY, nombre VARCHAR(100) UNIQUE NOT NULL)"))
@@ -164,13 +168,34 @@ def init_db():
         if conn.execute(text("SELECT count(*) FROM cat_servicios")).scalar() == 0:
             for s in DEFAULT_SERVICIOS:
                 conn.execute(text("INSERT INTO cat_servicios (nombre) VALUES (:n) ON CONFLICT DO NOTHING"), {"n": s})
-        if conn.execute(text(f"SELECT count(*) FROM users WHERE username='{SUPERADMIN_USERNAME}'")).scalar() == 0:
-            conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES (:u,:h,'admin')"), {"u": SUPERADMIN_USERNAME, "h": hash_pw("Areakde5@")})
+        # FIX BUG-01: usar parámetro SQL en vez de f-string para evitar SQL injection
+        if conn.execute(text("SELECT count(*) FROM users WHERE username=:u"), {"u": SUPERADMIN_USERNAME}).scalar() == 0:
+            conn.execute(text("INSERT INTO users (username,password_hash,role) VALUES (:u,:h,'admin')"),
+                         {"u": SUPERADMIN_USERNAME, "h": hash_pw("Areakde5@")})
 
 try:
     init_db()
 except Exception as _e:
     st.error(f"Error DB Inicialización: {_e}")
+
+# =====================================================================
+# FIX SEC: SESIÓN ÚNICA POR USUARIO
+# _get_db_session_token está cacheado 15 s para no hacer un query a la BD
+# en cada interacción, pero lo suficientemente fresco para detectar un
+# login concurrente en pocos segundos.
+# =====================================================================
+@st.cache_data(ttl=15, show_spinner=False)
+def _get_db_session_token(username: str) -> str:
+    """Retorna el token de sesión activo en la BD para un usuario."""
+    try:
+        with engine.connect() as conn:
+            row = conn.execute(
+                text("SELECT session_token FROM users WHERE username=:u"),
+                {"u": username}
+            ).fetchone()
+            return str(row[0]) if (row and row[0]) else ''
+    except Exception:
+        return ''
 
 @st.cache_data(ttl=300, show_spinner=False)
 def get_zonas() -> list:
@@ -201,7 +226,6 @@ def get_causas_con_flag() -> dict:
 def clear_catalog_cache():
     get_zonas.clear(); get_cat.clear(); get_causas_con_flag.clear()
 
-# PERF: cache_version para invalidación granular sin borrar todo el caché
 @st.cache_data(ttl=300, show_spinner=False)
 def get_all_cmdb_nodos(cache_version: int = 0) -> dict:
     try:
@@ -211,7 +235,6 @@ def get_all_cmdb_nodos(cache_version: int = 0) -> dict:
     except Exception:
         return {}
 
-# FIX BUG: comparación exacta z == zona_l evita falsos positivos por substring
 def get_clientes_cmdb(zona: str, equipo: str) -> int:
     if zona == "San Salvador (Central)":
         return 0
@@ -226,7 +249,6 @@ def get_clientes_cmdb(zona: str, equipo: str) -> int:
 # =====================================================================
 # CARGA Y ENRIQUECIMIENTO
 # =====================================================================
-# PERF: cache_version → invalidación granular; meses no activos siguen cacheados
 @st.cache_data(ttl=60, show_spinner=False)
 def load_data_rango(
     fecha_ini: date, fecha_fin: date, include_deleted: bool = False,
@@ -236,7 +258,6 @@ def load_data_rango(
     s_date = datetime.combine(fecha_ini, datetime_time(0, 0, 0))
     e_date = datetime.combine(fecha_fin, datetime_time(23, 59, 59))
     params: dict = {"s": s_date, "e": e_date}
-    # FIX BUG: 4ª condición corregida — captura tickets abiertos con inicio ≤ fin del rango
     conds = [
         "(  (inicio_incidente >= :s AND inicio_incidente <= :e)"
         "  OR (fin_incidente   >= :s AND fin_incidente   <= :e)"
@@ -303,10 +324,10 @@ def enriquecer(df: pd.DataFrame) -> pd.DataFrame:
     return df
 
 # =====================================================================
-# FIX BUG CRÍTICO: strip_tz a nivel de DataFrame (columna a columna)
+# FIX BUG CRÍTICO: strip_tz a nivel de DataFrame (columna a columna).
 # El approach anterior aplicaba strip_tz a filas (Series de tipo mixto),
 # donde is_datetime64_any_dtype siempre devuelve False → timezone nunca
-# se quitaba → todas las filas siempre parecían "cambiadas" → el loop
+# se quitaba → TODAS las filas siempre parecían "cambiadas" → el loop
 # UPDATE ejecutaba queries innecesarias para cada fila en cada guardado.
 # =====================================================================
 def _strip_tz_df(df: pd.DataFrame) -> pd.DataFrame:
@@ -468,9 +489,10 @@ def log_audit(action: str, detail: str):
         pass
 
 # =====================================================================
-# REPORTE PDF — MEJORADO Y PROFESIONAL
-# Secciones: Portada · KPIs · SLA Zonas · Análisis T1/T2/T3 ·
-#            Pendientes · Top Incidentes · Causas Raíz · Afectación
+# REPORTE PDF PROFESIONAL
+# FIX BUG-02 y BUG-03: guardas correctas de columnas en df, sin df.get()
+# 7 secciones: KPIs · SLA Zonas · Estratificación · Salud de Datos ·
+#              Top Incidentes · Causas Raíz · Afectación Acumulada
 # =====================================================================
 def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame, zonas_todas: list) -> bytes:
     def mk(name, size, font='Helvetica', color=rl_colors.black, **kw):
@@ -484,15 +506,13 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame, zonas_todas: l
     COL_WH  = rl_colors.white
     COL_BLK = rl_colors.black
 
-    s_brand  = mk('br', 26, 'Helvetica-Bold', rl_colors.HexColor(COLOR_SECONDARY), spaceAfter=0)
-    s_title  = mk('t',  13, 'Helvetica-Bold', rl_colors.HexColor(COLOR_PRIMARY),    spaceAfter=2)
-    s_sub    = mk('s',  10, 'Helvetica',      COL_GRY,  spaceAfter=10)
-    s_period = mk('pe', 11, 'Helvetica-Bold', COL_ACC,  spaceAfter=2)
-    s_body   = mk('b',   9, 'Helvetica',      COL_BLK,  spaceAfter=3)
-    s_sec    = mk('h',  12, 'Helvetica-Bold', COL_H,    spaceBefore=12, spaceAfter=5)
-    s_foot   = mk('f',   7, 'Helvetica',      COL_GRY)
+    s_brand = mk('br', 26, 'Helvetica-Bold', rl_colors.HexColor(COLOR_SECONDARY), spaceAfter=0)
+    s_title = mk('t',  13, 'Helvetica-Bold', rl_colors.HexColor(COLOR_PRIMARY),   spaceAfter=2)
+    s_body  = mk('b',   9, 'Helvetica',      COL_BLK, spaceAfter=3)
+    s_sec   = mk('h',  12, 'Helvetica-Bold', COL_H,   spaceBefore=12, spaceAfter=5)
+    s_foot  = mk('f',   7, 'Helvetica',      COL_GRY)
 
-    def tbl(hdr_col, accent_col=None, col_widths=None):
+    def tbl_style(hdr_col, accent=False):
         style = [
             ('BACKGROUND',    (0,0), (-1,0),  hdr_col),
             ('TEXTCOLOR',     (0,0), (-1,0),  COL_WH),
@@ -507,154 +527,140 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame, zonas_todas: l
             ('LEFTPADDING',   (0,0), (-1,-1), 6),
             ('RIGHTPADDING',  (0,0), (-1,-1), 6),
         ]
-        if accent_col:
+        if accent:
             style += [
-                ('TEXTCOLOR',  (1,1),(1,-1), rl_colors.HexColor(COLOR_PRIMARY)),
-                ('FONTNAME',   (1,1),(1,-1), 'Helvetica-Bold'),
-                ('ALIGN',      (1,0),(1,-1), 'CENTER'),
+                ('TEXTCOLOR', (1,1),(1,-1), rl_colors.HexColor(COLOR_PRIMARY)),
+                ('FONTNAME',  (1,1),(1,-1), 'Helvetica-Bold'),
+                ('ALIGN',     (1,0),(1,-1), 'CENTER'),
             ]
         return TableStyle(style)
-
-    buf = BytesIO()
-    doc = SimpleDocTemplate(buf, pagesize=A4,
-                            leftMargin=1.8*cm, rightMargin=1.8*cm,
-                            topMargin=1.8*cm, bottomMargin=1.8*cm)
-    story = []
-    now_str = datetime.now(SV_TZ).strftime('%d/%m/%Y %H:%M')
-
-    # ── CABECERA ──────────────────────────────────────────────────────
-    header_data = [[
-        Paragraph("MULTINET", s_brand),
-        Paragraph(f"<b>Periodo analizado:</b> {label_periodo}<br/>"
-                  f"<b>Generado:</b> {now_str} (hora El Salvador)<br/>"
-                  f"<b>Clasificación:</b> Documento Confidencial", s_body),
-    ]]
-    header_tbl = Table(header_data, colWidths=[7*cm, 10*cm])
-    header_tbl.setStyle(TableStyle([
-        ('VALIGN',  (0,0),(-1,-1), 'MIDDLE'),
-        ('ALIGN',   (1,0),(1,0),   'RIGHT'),
-        ('LINEBELOW',(0,0),(-1,0), 1.5, rl_colors.HexColor(COLOR_PRIMARY)),
-        ('BOTTOMPADDING',(0,0),(-1,0), 8),
-    ]))
-    story.append(header_tbl)
-    story.append(Paragraph("Reporte Ejecutivo — Network Operations Center", s_title))
-    story.append(HRFlowable(width="100%", thickness=1, color=rl_colors.HexColor('#dddddd'), spaceAfter=10))
-
-    # ── SECCIÓN 1: KPIs GLOBALES ──────────────────────────────────────
-    story.append(Paragraph("1. Indicadores Operativos Globales", s_sec))
-    story.append(Paragraph(
-        "Métricas del periodo, calculadas sobre incidentes cerrados con tiempos exactos. "
-        "El SLA excluye mantenimientos programados.", s_body))
 
     def sla_color(v):
         if v >= 99: return rl_colors.HexColor('#29b09d')
         if v >= 95: return rl_colors.HexColor('#ff9f43')
         return rl_colors.HexColor(COLOR_DANGER)
 
-    sla_val = kpis['global']['sla']
+    buf   = BytesIO()
+    doc   = SimpleDocTemplate(buf, pagesize=A4, leftMargin=1.8*cm, rightMargin=1.8*cm, topMargin=1.8*cm, bottomMargin=1.8*cm)
+    story = []
+    now_str = datetime.now(SV_TZ).strftime('%d/%m/%Y %H:%M')
+
+    # ── CABECERA ──
+    hdr_data = [[
+        Paragraph("MULTINET", s_brand),
+        Paragraph(f"<b>Periodo analizado:</b> {label_periodo}<br/>"
+                  f"<b>Generado:</b> {now_str} (hora El Salvador)<br/>"
+                  f"<b>Clasificación:</b> Documento Confidencial", s_body),
+    ]]
+    hdr_tbl = Table(hdr_data, colWidths=[7*cm, 10*cm])
+    hdr_tbl.setStyle(TableStyle([
+        ('VALIGN',      (0,0),(-1,-1), 'MIDDLE'),
+        ('ALIGN',       (1,0),(1,0),   'RIGHT'),
+        ('LINEBELOW',   (0,0),(-1,0),  1.5, rl_colors.HexColor(COLOR_PRIMARY)),
+        ('BOTTOMPADDING',(0,0),(-1,0), 8),
+    ]))
+    story.append(hdr_tbl)
+    story.append(Paragraph("Reporte Ejecutivo — Network Operations Center", s_title))
+    story.append(HRFlowable(width="100%", thickness=1, color=rl_colors.HexColor('#dddddd'), spaceAfter=10))
+
+    # ── SECCIÓN 1: KPIs GLOBALES ──
+    story.append(Paragraph("1. Indicadores Operativos Globales", s_sec))
+    story.append(Paragraph("Métricas del periodo calculadas sobre incidentes cerrados con tiempos exactos. "
+                            "El SLA excluye mantenimientos programados.", s_body))
+    sla_val  = kpis['global']['sla']
     kpi_rows = [
         ['Indicador', 'Valor', 'Referencia / Descripción'],
-        ['SLA Global (Disponibilidad)',  f"{sla_val:.4f}%",                  'Meta: ≥ 99.5 % | Excluye mantenimientos programados'],
-        ['MTTR Real (resolución T1)',    f"{kpis['t1']['mttr']:.2f} h",      'Tiempo medio de resolución en incidentes con clientes'],
-        ['ACD — Afectación por cliente', f"{kpis['t1']['acd']:.2f} h",      'Percepción real: (Σ duracion × clientes) / total clientes'],
-        ['Impacto Acumulado',           f"{kpis['global']['db']/24:.3f} días", 'Total horas de caída del periodo / 24'],
-        ['Falla Mayor (Pico)',           f"{kpis['global']['mh']:.2f} h",    'Incidente individual de mayor duración'],
-        ['MTBF (Estabilidad de Red)',    f"{kpis['global']['mtbf']:.1f} h",  'Tiempo medio entre fallas (horas disponibles / fallas)'],
-        ['Fallas P1 Críticas',          str(kpis['global']['p1']),           'Duración ≥ 12 h  O  clientes afectados ≥ 1 000'],
-        ['Total Eventos Externos',      str(kpis['global']['total_fallas']), 'Incidentes cerrados que afectaron clientes o red'],
-        ['Clientes Impactados (T1)',     f"{kpis['t1']['clientes']:,}",       'Usuarios únicos afectados en incidentes T1 exactos'],
+        ['SLA Global (Disponibilidad)',   f"{sla_val:.4f}%",                   'Meta: ≥ 99.5 % | Excluye mantenimientos programados'],
+        ['MTTR Real (resolución T1)',     f"{kpis['t1']['mttr']:.2f} h",       'Tiempo medio de resolución en incidentes con clientes'],
+        ['ACD — Afectación por cliente',  f"{kpis['t1']['acd']:.2f} h",       'Percepción real: (Σ duración × clientes) / total clientes'],
+        ['Impacto Acumulado',            f"{kpis['global']['db']/24:.3f} días",'Total horas de caída del periodo / 24'],
+        ['Falla Mayor (Pico)',            f"{kpis['global']['mh']:.2f} h",     'Incidente individual de mayor duración'],
+        ['MTBF (Estabilidad de Red)',     f"{kpis['global']['mtbf']:.1f} h",   'Tiempo medio entre fallas (horas disponibles / fallas)'],
+        ['Fallas P1 Críticas',           str(kpis['global']['p1']),            'Duración ≥ 12 h  O  clientes afectados ≥ 1 000'],
+        ['Total Eventos Externos',       str(kpis['global']['total_fallas']),  'Incidentes cerrados que afectaron clientes o red'],
+        ['Clientes Impactados (T1)',      f"{kpis['t1']['clientes']:,}",        'Usuarios únicos afectados en incidentes T1 exactos'],
     ]
     t_kpi = Table(kpi_rows, colWidths=[6*cm, 3*cm, 8.5*cm])
-    t_kpi.setStyle(tbl(COL_H, accent_col=True))
-    # Colorear celda de SLA según valor
-    sla_row_idx = 1
-    t_kpi.setStyle(TableStyle([
-        ('BACKGROUND', (1, sla_row_idx),(1, sla_row_idx), sla_color(sla_val)),
-        ('TEXTCOLOR',  (1, sla_row_idx),(1, sla_row_idx), COL_WH),
-    ]))
+    t_kpi.setStyle(tbl_style(COL_H, accent=True))
+    t_kpi.setStyle(TableStyle([('BACKGROUND',(1,1),(1,1), sla_color(sla_val)), ('TEXTCOLOR',(1,1),(1,1), COL_WH)]))
     story += [t_kpi, Spacer(1, 0.3*cm)]
 
-    # ── SECCIÓN 2: SLA POR ZONA ───────────────────────────────────────
+    # ── SECCIÓN 2: SLA POR ZONA ──
     story.append(Paragraph("2. Disponibilidad por Zona / Nodo (SLA Geográfico)", s_sec))
-    story.append(Paragraph(
-        "SLA individual por nodo calculado con intervalos fusionados. "
-        "Verde ≥ 99 %, Naranja 95–99 %, Rojo < 95 %.", s_body))
-
-    zona_rows = [['Zona / Nodo', 'SLA (%)', 'Estado', 'Downtime estimado']]
-    h_tot_periodo = ((datetime.combine(
-        date.today().replace(day=1), datetime_time(23,59,59)) -
-        datetime.combine(date.today().replace(day=1), datetime_time(0,0,0))
-    ).total_seconds()) / 3600.0  # approx; real value in kpis
+    story.append(Paragraph("SLA individual por nodo con intervalos fusionados. "
+                            "Verde ≥ 99 %, Naranja 95–99 %, Rojo < 95 %.", s_body))
+    zona_rows = [['Zona / Nodo', 'SLA (%)', 'Estado']]
     for z_nombre, _, _ in zonas_todas:
-        sla_z = kpis['zonas_sla'].get(z_nombre, 100.0)
-        if sla_z >= 99.0:   estado_z = "Excelente"
-        elif sla_z >= 95.0: estado_z = "Aceptable"
-        else:               estado_z = "Critico"
-        zona_rows.append([z_nombre, f"{sla_z:.3f}%", estado_z, "—"])
-    t_zona = Table(zona_rows, colWidths=[6.5*cm, 2.8*cm, 3.2*cm, 5*cm])
-    t_zona.setStyle(tbl(COL_H2))
-    # Colorear columna de estado
+        sla_z   = kpis['zonas_sla'].get(z_nombre, 100.0)
+        estado_z = "Excelente" if sla_z >= 99.0 else ("Aceptable" if sla_z >= 95.0 else "Crítico")
+        zona_rows.append([z_nombre, f"{sla_z:.3f}%", estado_z])
+    t_zona = Table(zona_rows, colWidths=[8*cm, 3.5*cm, 6*cm])
+    t_zona.setStyle(tbl_style(COL_H2))
     for ri in range(1, len(zona_rows)):
-        v = float(zona_rows[ri][1].replace('%',''))
-        c = sla_color(v)
-        t_zona.setStyle(TableStyle([
-            ('TEXTCOLOR', (1,ri),(1,ri), c),
-            ('FONTNAME',  (1,ri),(1,ri), 'Helvetica-Bold'),
-            ('TEXTCOLOR', (2,ri),(2,ri), c),
-            ('FONTNAME',  (2,ri),(2,ri), 'Helvetica-Bold'),
-        ]))
+        try:
+            v = float(zona_rows[ri][1].replace('%',''))
+            c = sla_color(v)
+            t_zona.setStyle(TableStyle([
+                ('TEXTCOLOR',(1,ri),(1,ri), c), ('FONTNAME',(1,ri),(1,ri), 'Helvetica-Bold'),
+                ('TEXTCOLOR',(2,ri),(2,ri), c), ('FONTNAME',(2,ri),(2,ri), 'Helvetica-Bold'),
+            ]))
+        except Exception:
+            pass
     story += [t_zona, Spacer(1, 0.3*cm)]
 
-    # ── SECCIÓN 3: ANÁLISIS T1 / T2 / T3 ────────────────────────────
+    # ── SECCIÓN 3: ESTRATIFICACIÓN T1/T2/T3 ──
     story.append(Paragraph("3. Estratificación de Incidentes por Nivel de Conocimiento", s_sec))
-    story.append(Paragraph(
-        "T1: tiempos exactos + clientes afectados. "
-        "T2: tiempos exactos, sin clientes directos. "
-        "T3: tiempos parciales (sin hora exacta de inicio o fin). "
-        "T-Int: fallas internas que no impactan clientes.", s_body))
+    story.append(Paragraph("T1: tiempos exactos + clientes. T2: exactos sin clientes. "
+                            "T3: tiempos parciales. T-Int: fallas internas.", s_body))
     tier_rows = [
         ['Nivel', 'Eventos', 'MTTR Prom.', 'Clientes', 'Notas'],
-        ['T1 (Exactos + Clientes)',   str(kpis['t1']['fallas']),  f"{kpis['t1']['mttr']:.2f} h",  f"{kpis['t1']['clientes']:,}", 'Base de cálculo principal de SLA y ACD'],
-        ['T2 (Exactos sin Clientes)', str(kpis['t2']['fallas']),  f"{kpis['t2']['mttr']:.2f} h",  '0',  'Fallas de infraestructura sin impacto directo'],
-        ['T3 (Parciales)',            str(kpis['t3']['fallas']),  '—',                             f"~{kpis['t3']['clientes_est']:,}", 'No incluidos en SLA por falta de tiempos exactos'],
-        ['T-Int (Internos)',          str(kpis['int']['fallas']), f"{kpis['int']['mttr']:.2f} h",  '0',  'Fallas internas NOC/infraestructura'],
+        ['T1 (Exactos + Clientes)',   str(kpis['t1']['fallas']),  f"{kpis['t1']['mttr']:.2f} h",  f"{kpis['t1']['clientes']:,}", 'Base de cálculo SLA y ACD'],
+        ['T2 (Exactos sin Clientes)', str(kpis['t2']['fallas']),  f"{kpis['t2']['mttr']:.2f} h",  '0',  'Sin impacto directo en clientes'],
+        ['T3 (Parciales)',            str(kpis['t3']['fallas']),  '—', f"~{kpis['t3']['clientes_est']:,}", 'No incluidos en SLA por tiempos incompletos'],
+        ['T-Int (Internos)',          str(kpis['int']['fallas']), f"{kpis['int']['mttr']:.2f} h",  '0',  'Fallas internas NOC'],
     ]
     t_tier = Table(tier_rows, colWidths=[5*cm, 2*cm, 2.5*cm, 2.5*cm, 5.5*cm])
-    t_tier.setStyle(tbl(COL_H))
+    t_tier.setStyle(tbl_style(COL_H))
     story += [t_tier, Spacer(1, 0.3*cm)]
 
-    # ── SECCIÓN 4: SALUD DE DATOS / PENDIENTES ────────────────────────
+    # ── SECCIÓN 4: SALUD DE DATOS ──
     story.append(Paragraph("4. Salud de Datos y Alertas Operativas", s_sec))
     pend_rows = [
         ['Indicador', 'Cantidad', 'Acción recomendada'],
-        ['Tickets Abiertos (En Curso)',          str(kpis['abiertos']),        'Cerrar con hora exacta de restablecimiento'],
-        ['Incidentes sin tiempos exactos (T3)',  str(kpis['t3']['fallas']),   'Completar tiempos para incluir en SLA'],
-        ['Incidentes Internos registrados',      str(kpis['int']['fallas']),  'Revisar causa raíz y plan de mejora'],
+        ['Tickets Abiertos (En Curso)',         str(kpis['abiertos']),       'Cerrar con hora exacta de restablecimiento'],
+        ['Incidentes sin tiempos exactos (T3)', str(kpis['t3']['fallas']),  'Completar tiempos para incluir en SLA'],
+        ['Incidentes Internos registrados',     str(kpis['int']['fallas']), 'Revisar causa raíz y plan de mejora'],
     ]
     t_pend = Table(pend_rows, colWidths=[6*cm, 2.5*cm, 9*cm])
-    t_pend.setStyle(tbl(COL_H2))
+    t_pend.setStyle(tbl_style(COL_H2))
     story += [t_pend, Spacer(1, 0.3*cm)]
 
-    # ── SECCIÓN 5: TOP INCIDENTES ─────────────────────────────────────
-    if not df.empty and 'duracion_horas' in df.columns and 'estado' in df.columns:
-        df_top = df[(df['estado'] == 'Cerrado') & (df['categoria'] != CAT_INTERNA) & (df['conocimiento_tiempos'] == 'Total')]
+    # ── SECCIÓN 5: TOP INCIDENTES ──
+    # FIX BUG-03: verificar todas las columnas necesarias antes de filtrar
+    _cols_top = {'estado', 'categoria', 'conocimiento_tiempos', 'duracion_horas'}
+    if not df.empty and _cols_top.issubset(df.columns):
+        df_top = df[
+            (df['estado'] == 'Cerrado') &
+            (df['categoria'] != CAT_INTERNA) &
+            (df['conocimiento_tiempos'] == 'Total')
+        ]
         if not df_top.empty:
             story.append(Paragraph("5. Top 8 Incidentes por Duración", s_sec))
-            story.append(Paragraph("Los incidentes de mayor duración del periodo, con tiempos exactos.", s_body))
+            story.append(Paragraph("Incidentes de mayor duración con tiempos exactos.", s_body))
             top8 = df_top.nlargest(8, 'duracion_horas')
             inc_rows = [['ID','Zona','Causa Raíz','Duración','Clientes','Sev.']]
             for _, r in top8.iterrows():
-                sev_text = str(r.get('Severidad', '')).replace('🔴','').replace('🟠','').replace('🟡','').replace('🟢','').strip()
+                sev_text = str(r.get('Severidad', '')).replace('🔴','').replace('🟠','').replace('🟡','').replace('🟢','').replace('🚨','').strip()
                 inc_rows.append([
                     str(int(r.get('id', 0))),
                     str(r.get('zona', ''))[:20],
                     str(r.get('causa_raiz', ''))[:28],
                     f"{r.get('duracion_horas',0):.1f} h",
                     str(int(r.get('clientes_afectados', 0))),
-                    sev_text[:12],
+                    sev_text[:14],
                 ])
             t_inc = Table(inc_rows, colWidths=[1*cm, 4*cm, 5*cm, 2.2*cm, 2*cm, 3.3*cm])
-            t_inc.setStyle(tbl(COL_H))
+            t_inc.setStyle(tbl_style(COL_H))
             story += [t_inc, Spacer(1, 0.3*cm)]
             sec_num = 6
         else:
@@ -662,61 +668,52 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame, zonas_todas: l
     else:
         sec_num = 5
 
-    # ── SECCIÓN 6: CAUSAS RAÍZ ───────────────────────────────────────
-    if not df.empty and 'causa_raiz' in df.columns:
+    # ── SECCIÓN 6: CAUSAS RAÍZ ──
+    if not df.empty and 'causa_raiz' in df.columns and 'estado' in df.columns:
         df_causas = df[df['estado'] == 'Cerrado']
         if not df_causas.empty:
             story.append(Paragraph(f"{sec_num}. Análisis de Causas Raíz", s_sec))
             story.append(Paragraph("Frecuencia de causas en incidentes externos cerrados del periodo.", s_body))
             top_causas = (df_causas.groupby('causa_raiz').agg(
-                Eventos=('id','count'),
-                Horas=('duracion_horas','sum'),
-                Clientes=('clientes_afectados','sum')
+                Eventos=('id','count'), Horas=('duracion_horas','sum'), Clientes=('clientes_afectados','sum')
             ).reset_index().sort_values('Eventos', ascending=False).head(8))
             caus_rows = [['Causa Raíz','Eventos','Horas tot.','Clientes','Tipo']]
             causas_map = get_causas_con_flag()
             for _, r in top_causas.iterrows():
                 tipo = "Externa" if causas_map.get(r['causa_raiz'], False) else "Interna"
-                caus_rows.append([
-                    str(r['causa_raiz'])[:35],
-                    str(int(r['Eventos'])),
-                    f"{r['Horas']:.1f} h",
-                    str(int(r['Clientes'])),
-                    tipo,
-                ])
+                caus_rows.append([str(r['causa_raiz'])[:35], str(int(r['Eventos'])),
+                                   f"{r['Horas']:.1f} h", str(int(r['Clientes'])), tipo])
             t_caus = Table(caus_rows, colWidths=[6.5*cm, 2*cm, 2.5*cm, 2.5*cm, 2.5*cm])
-            t_caus.setStyle(tbl(COL_H))
+            t_caus.setStyle(tbl_style(COL_H))
             story += [t_caus, Spacer(1, 0.3*cm)]
             sec_num += 1
 
-    # ── SECCIÓN 7: ZONAS CON MAYOR AFECTACIÓN ────────────────────────
-    if not df.empty and 'duracion_horas' in df.columns and 'zona_completa' in df.columns:
-        df_ext_pdf = df[(df.get('categoria', pd.Series()) != CAT_INTERNA) & (df['estado'] == 'Cerrado')] if 'categoria' in df.columns else pd.DataFrame()
+    # ── SECCIÓN 7: ZONAS CON MAYOR AFECTACIÓN ──
+    # FIX BUG-02: verificar columnas con 'in df.columns' en vez de df.get()
+    if (not df.empty and
+            'duracion_horas' in df.columns and
+            'zona_completa'  in df.columns and
+            'categoria'      in df.columns and
+            'estado'         in df.columns):
+        df_ext_pdf = df[(df['categoria'] != CAT_INTERNA) & (df['estado'] == 'Cerrado')]
         if not df_ext_pdf.empty:
             story.append(Paragraph(f"{sec_num}. Zonas con Mayor Afectación Acumulada", s_sec))
             story.append(Paragraph("Ranking de nodos por horas totales de impacto en el periodo.", s_body))
-            top_z = df_ext_pdf.groupby('zona_completa')['duracion_horas'].sum().nlargest(8).reset_index()
-            z_rows = [['Zona / Nodo', 'Horas Totales', 'Días Equivalentes', '% del Periodo']]
-            h_periodo = ((datetime.combine(date.today(), datetime_time(23,59,59)) -
-                          datetime.combine(date.today().replace(day=1), datetime_time(0,0,0))
-                          ).total_seconds()) / 3600.0
+            top_z  = df_ext_pdf.groupby('zona_completa')['duracion_horas'].sum().nlargest(8).reset_index()
+            z_rows = [['Zona / Nodo', 'Horas Totales', 'Días Equiv.']]
             for _, r in top_z.iterrows():
-                pct = min(100.0, r['duracion_horas'] / h_periodo * 100) if h_periodo > 0 else 0.0
                 z_rows.append([str(r['zona_completa']), f"{r['duracion_horas']:.1f} h",
-                                f"{r['duracion_horas']/24:.2f} días", f"{pct:.2f}%"])
-            t_z = Table(z_rows, colWidths=[6*cm, 3*cm, 3.5*cm, 3*cm])
-            t_z.setStyle(tbl(COL_H2, accent_col=True))
+                                f"{r['duracion_horas']/24:.2f} días"])
+            t_z = Table(z_rows, colWidths=[8*cm, 4*cm, 5.5*cm])
+            t_z.setStyle(tbl_style(COL_H2, accent=True))
             story += [t_z, Spacer(1, 0.3*cm)]
 
-    # ── PIE DE PÁGINA ─────────────────────────────────────────────────
+    # ── PIE ──
     story += [
         Spacer(1, 0.8*cm),
         HRFlowable(width="100%", thickness=0.5, color=rl_colors.HexColor('#dddddd'), spaceAfter=5),
-        Paragraph(
-            f"MULTINET — Network Operations Center  ·  {now_str}  ·  "
-            f"Periodo: {label_periodo}  ·  Documento Confidencial — Uso Interno",
-            s_foot
-        ),
+        Paragraph(f"MULTINET — Network Operations Center  ·  {now_str}  ·  "
+                  f"Periodo: {label_periodo}  ·  Documento Confidencial — Uso Interno", s_foot),
     ]
     doc.build(story)
     buf.seek(0)
@@ -724,6 +721,8 @@ def generar_pdf(label_periodo: str, kpis: dict, df: pd.DataFrame, zonas_todas: l
 
 # =====================================================================
 # LOGIN SEGURO
+# FIX SEC: genera session_token en cada login exitoso y lo almacena
+# en la BD para detectar sesiones concurrentes con el mismo usuario.
 # =====================================================================
 def do_login():
     u, p = st.session_state.log_u, st.session_state.log_p
@@ -742,8 +741,18 @@ def do_login():
                 elif ldt and ldt > now_sv:
                     st.session_state.log_err = f"⏳ Cuenta bloqueada por {(ldt - now_sv).seconds // 60 + 1} min."
                 elif check_pw(p, ph):
-                    conn.execute(text("UPDATE users SET failed_attempts=0,locked_until=NULL WHERE id=:id"), {"id": uid})
-                    st.session_state.update({"logged_in": True, "role": rol, "username": u, "log_err": ""})
+                    # FIX SEC: generar token único y almacenarlo en BD
+                    token = secrets.token_hex(32)
+                    conn.execute(
+                        text("UPDATE users SET failed_attempts=0, locked_until=NULL, session_token=:tok WHERE id=:id"),
+                        {"tok": token, "id": uid}
+                    )
+                    # Invalidar caché del token para que otras sesiones lo detecten pronto
+                    _get_db_session_token.clear()
+                    st.session_state.update({
+                        "logged_in": True, "role": rol, "username": u,
+                        "log_err": "", "session_token": token
+                    })
                     return
                 else:
                     fa += 1
@@ -764,6 +773,7 @@ def do_login():
     st.session_state.log_u = ""
     st.session_state.log_p = ""
 
+# ── Pantalla de login ──
 if not st.session_state.logged_in:
     st.markdown("<div style='margin-top:15vh;'></div>", unsafe_allow_html=True)
     _, col_c, _ = st.columns([1, 1.2, 1])
@@ -780,7 +790,29 @@ if not st.session_state.logged_in:
     st.stop()
 
 # =====================================================================
+# FIX SEC: VERIFICACIÓN DE SESIÓN ÚNICA (después del st.stop() del login)
+# Si otro dispositivo inició sesión con las mismas credenciales, el
+# token en la BD cambia y esta sesión queda invalidada automáticamente.
+# La verificación usa un caché de 15 s para no golpear la BD en cada
+# interacción menor del usuario.
+# =====================================================================
+_local_token = st.session_state.get('session_token', '')
+if _local_token:
+    _db_token = _get_db_session_token(st.session_state.username)
+    if _db_token and _db_token != _local_token:
+        # Resetear sesión sin perder flash_msg
+        for _k, _v in _sesion_defaults.items():
+            st.session_state[_k] = _v
+        st.session_state.flash_msg  = "⚠️ Tu sesión fue cerrada: el mismo usuario inició sesión desde otro dispositivo."
+        st.session_state.flash_type = "error"
+        st.rerun()
+
+# =====================================================================
 # SIDEBAR
+# PERF: kpis_main se calcula UNA sola vez aquí y se reutiliza tanto
+# en el PDF como en el dashboard tab, eliminando la doble ejecución.
+# PERF: PDF cacheado en session_state, clave = (periodo+filtros+versión).
+# Solo se regenera cuando los datos o los filtros realmente cambian.
 # =====================================================================
 with st.sidebar:
     st.caption(f"👤 **{st.session_state.username}** ({st.session_state.role.capitalize()})  |  NOC v1.0")
@@ -805,11 +837,24 @@ with st.sidebar:
 
     df_m = enriquecer(load_data_rango(fecha_ini, fecha_fin, False, z_sel, srv_sel, seg_sel, cache_version=_dv()))
 
+    # PERF: calc_kpis una sola vez; el dashboard lo reutiliza directamente
+    kpis_main = calc_kpis(df_m, fecha_ini, fecha_fin) if not df_m.empty else None
+
+    # PERF: PDF solo se regenera cuando cambian datos/filtros/versión
+    # (no en CADA render/interacción como antes con data=generar_pdf(...) inline)
+    _pdf_cache_key = f"{label_periodo}|{z_sel}|{srv_sel}|{seg_sel}|{_dv()}"
+    if st.session_state.get('_pdf_cache_key') != _pdf_cache_key:
+        if not df_m.empty and kpis_main is not None:
+            st.session_state['_pdf_bytes']     = generar_pdf(label_periodo, kpis_main, df_m, get_zonas())
+        else:
+            st.session_state['_pdf_bytes']     = None
+        st.session_state['_pdf_cache_key'] = _pdf_cache_key
+
     st.divider()
-    if not df_m.empty:
+    if not df_m.empty and st.session_state.get('_pdf_bytes'):
         st.download_button(
             "📥 Descargar Reporte PDF",
-            data=generar_pdf(label_periodo, calc_kpis(df_m, fecha_ini, fecha_fin), df_m, get_zonas()),
+            data=st.session_state['_pdf_bytes'],
             file_name=f"Reporte_NOC_{m_sel}_{a_sel}.pdf",
             mime="application/pdf",
             use_container_width=True
@@ -817,6 +862,16 @@ with st.sidebar:
 
     st.divider()
     if st.button("🚪 Cerrar Sesión", use_container_width=True):
+        # FIX BUG-05: limpiar session_token en BD para liberar la sesión correctamente
+        try:
+            with engine.begin() as conn:
+                conn.execute(
+                    text("UPDATE users SET session_token=NULL WHERE username=:u"),
+                    {"u": st.session_state.get('username', '')}
+                )
+        except Exception:
+            pass
+        _get_db_session_token.clear()
         log_audit("LOGOUT", "Sesión cerrada.")
         st.session_state.clear()
         st.rerun()
@@ -841,6 +896,10 @@ tabs = st.tabs(tab_labels)
 
 # ─────────────────────────────────────────────
 # TAB 0 — DASHBOARD
+# PERF: usa kpis_main ya calculado en el sidebar (no vuelve a calcular).
+# AUTO-REFRESH: cada write llama _invalidar_cache() + st.rerun() →
+# nuevo data_version → load_data_rango cache-miss → BD fresca →
+# df_m fresco → gráficas y KPIs actualizados en el mismo rerun.
 # ─────────────────────────────────────────────
 with tabs[t_idx]:
     st.title(f"📊 Rendimiento de Red: {label_periodo}")
@@ -852,11 +911,11 @@ with tabs[t_idx]:
         p_a_sel = a_sel - 1 if m_idx == 1 else a_sel
         p_fi    = date(p_a_sel, p_m_idx, 1)
         p_ff    = date(p_a_sel, p_m_idx, calendar.monthrange(p_a_sel, p_m_idx)[1])
-        df_prev = enriquecer(load_data_rango(p_fi, p_ff, False, z_sel, srv_sel, seg_sel, cache_version=_dv()))
-
-        kpis      = calc_kpis(df_m,    fecha_ini, fecha_fin)
+        df_prev   = enriquecer(load_data_rango(p_fi, p_ff, False, z_sel, srv_sel, seg_sel, cache_version=_dv()))
+        kpis      = kpis_main  # reutilizar, ya calculado en sidebar
         kpis_prev = calc_kpis(df_prev, p_fi, p_ff) if not df_prev.empty else None
 
+        # INFO-01: _delta definida FUERA del else para que siempre esté disponible
         def _delta(cat, key, divisor=1, fmt="{:+.2f}", suffix=""):
             if not kpis_prev: return None
             return f"{fmt.format((kpis[cat][key] - kpis_prev[cat][key]) / divisor)}{' '+suffix if suffix else ''}"
@@ -896,7 +955,6 @@ with tabs[t_idx]:
         zonas_activas = [z[0] for z in get_zonas()]
         sla_data      = [{"Zona": z, "SLA (%)": kpis['zonas_sla'].get(z, 100.0)} for z in zonas_activas]
         df_sla_geo    = pd.DataFrame(sla_data).sort_values("SLA (%)", ascending=True)
-        # FIX BUG: fallback seguro si df_sla_geo está vacío
         sla_min = df_sla_geo["SLA (%)"].min() if not df_sla_geo.empty else 98.0
         fig_sla = px.bar(
             df_sla_geo, x="SLA (%)", y="Zona", orientation='h',
@@ -1059,6 +1117,9 @@ if role in ('admin', 'auditor'):
                                         """), {"z": z_f, "e": eq_f, "cl": cl_f})
 
                                 log_audit("INSERT", f"Falla ({estado_db}) en {z_f}")
+                                # AUTO-REFRESH: _invalidar_cache() + st.rerun() fuerza
+                                # una nueva consulta a BD en el próximo ciclo de render,
+                                # actualizando df_m, KPIs y gráficas instantáneamente.
                                 _invalidar_cache()
                                 st.session_state.form_reset += 1
                                 st.session_state.flash_msg  = "✅ Registro guardado exitosamente."
@@ -1232,22 +1293,19 @@ if role in ('admin', 'auditor'):
                 key="editor_incidentes_v11"
             )
 
-            # FIX BUG CRÍTICO: comparar DataFrames completos con strip a nivel de columna
-            # (no de fila), para que la eliminación de timezone funcione correctamente
-            # en columnas datetime antes de comparar.
+            # FIX BUG CRÍTICO: comparar a nivel de DataFrame (columna a columna)
+            # strip_tz funciona sobre columnas datetime, no sobre filas mixtas.
             ref_stripped = _strip_tz_df(ref_df.reset_index(drop=True))
             ed_stripped  = _strip_tz_df(ed_df.reset_index(drop=True))
             h_cam        = not ref_stripped.equals(ed_stripped)
 
             if h_cam:
                 if st.button("💾 Guardar Ediciones Manuales", type="primary", use_container_width=True):
-                    # Validar inicio_incidente no nulo en filas cambiadas
-                    filas_invalidas = []
-                    for i in range(len(ed_df)):
-                        if not ref_stripped.iloc[i].equals(ed_stripped.iloc[i]):
-                            if pd.isnull(ed_df.iloc[i].get('inicio_incidente')):
-                                filas_invalidas.append(i)
-
+                    filas_invalidas = [
+                        i for i in range(len(ed_df))
+                        if not ref_stripped.iloc[i].equals(ed_stripped.iloc[i])
+                        and pd.isnull(ed_df['inicio_incidente'].iloc[i] if 'inicio_incidente' in ed_df.columns else None)
+                    ]
                     if filas_invalidas:
                         st.session_state.flash_msg  = "❌ Error: 'Fecha de Inicio' es obligatoria en todas las filas editadas."
                         st.session_state.flash_type = "error"
@@ -1256,30 +1314,28 @@ if role in ('admin', 'auditor'):
                         with engine.begin() as conn:
                             for i in range(len(ed_df)):
                                 if ref_stripped.iloc[i].equals(ed_stripped.iloc[i]):
-                                    continue  # sin cambios
+                                    continue
                                 r = ed_df.iloc[i]
                                 try:
-                                    ini_dt = pd.to_datetime(r.get('inicio_incidente'))
-                                    if pd.isnull(r.get('fin_incidente')):
+                                    ini_dt = pd.to_datetime(r['inicio_incidente'] if 'inicio_incidente' in r.index else None)
+                                    if pd.isnull(r['fin_incidente'] if 'fin_incidente' in r.index else None):
                                         fin_dt_sql = None; dur_u = 0.0; con_u = "Parcial"; est_u = "Abierto"
                                     else:
-                                        fin_dt     = pd.to_datetime(r.get('fin_incidente'))
+                                        fin_dt     = pd.to_datetime(r['fin_incidente'])
                                         fin_dt_sql = fin_dt
                                         dur_u      = max(0.01, round((fin_dt - ini_dt).total_seconds() / 3600, 2))
                                         con_u      = "Total"; est_u = "Cerrado"
                                 except Exception:
                                     fin_dt_sql = None; dur_u = 0.0; con_u = "Parcial"; est_u = "Abierto"
 
-                                # FIX BUG: conversión robusta de clientes_afectados
                                 try:
-                                    cl_val = r.get('clientes_afectados', 0)
-                                    cl_val = int(float(cl_val)) if pd.notnull(cl_val) and str(cl_val).strip() != '' else 0
+                                    cl_raw = r['clientes_afectados'] if 'clientes_afectados' in r.index else 0
+                                    cl_val = int(float(cl_raw)) if pd.notnull(cl_raw) and str(cl_raw).strip() != '' else 0
                                 except Exception:
                                     cl_val = 0
 
-                                # FIX BUG: id null-safe
-                                row_id = r.get('id')
-                                if pd.isnull(row_id):
+                                row_id = r['id'] if 'id' in r.index else None
+                                if row_id is None or pd.isnull(row_id):
                                     continue
 
                                 conn.execute(text("""
@@ -1289,17 +1345,17 @@ if role in ('admin', 'auditor'):
                                         causa_raiz=:cr, descripcion=:d, duracion_horas=:dur,
                                         conocimiento_tiempos=:con WHERE id=:id
                                 """), {
-                                    "z":   str(r.get('zona', '')),
-                                    "sz":  str(r.get('subzona', '')),
-                                    "ag":  bool(r.get('afectacion_general', True)),
-                                    "s":   str(r.get('servicio', '')),
-                                    "c":   str(r.get('categoria', '')),
-                                    "e":   str(r.get('equipo_afectado', '')),
+                                    "z":   str(r['zona']           if 'zona'           in r.index else ''),
+                                    "sz":  str(r['subzona']        if 'subzona'        in r.index else ''),
+                                    "ag":  bool(r['afectacion_general'] if 'afectacion_general' in r.index else True),
+                                    "s":   str(r['servicio']       if 'servicio'       in r.index else ''),
+                                    "c":   str(r['categoria']      if 'categoria'      in r.index else ''),
+                                    "e":   str(r['equipo_afectado'] if 'equipo_afectado' in r.index else ''),
                                     "est": est_u,
                                     "idi": ini_dt, "idf": fin_dt_sql,
                                     "cl":  cl_val,
-                                    "cr":  str(r.get('causa_raiz', '')),
-                                    "d":   str(r.get('descripcion', '') or ''),
+                                    "cr":  str(r['causa_raiz']    if 'causa_raiz'    in r.index else ''),
+                                    "d":   str(r['descripcion']   if 'descripcion'   in r.index else '') or '',
                                     "dur": dur_u, "con": con_u,
                                     "id":  int(row_id),
                                 })
@@ -1485,9 +1541,8 @@ if role == 'admin' and len(tabs) > t_idx:
                     # FIX BUG: failed_attempts puede ser NULL en BD → fillna antes del editor
                     df_usrs['failed_attempts'] = df_usrs['failed_attempts'].fillna(0).astype(int)
 
-                    # FIX SUPER ADMIN: separar fila de Admin para mostrarla como solo lectura
-                    # El Super Admin nunca aparece en el editor editable para protegerlo
-                    # de cualquier cambio de rol, baneo o eliminación.
+                    # FIX SUPER ADMIN: Admin aparece como panel de solo lectura,
+                    # nunca en el data_editor editable → inmune a ban/role change/delete.
                     df_admin_row = df_usrs[df_usrs['username'] == SUPERADMIN_USERNAME]
                     df_otros     = df_usrs[df_usrs['username'] != SUPERADMIN_USERNAME].reset_index(drop=True)
 
@@ -1510,7 +1565,7 @@ if role == 'admin' and len(tabs) > t_idx:
                                 "Sel":             st.column_config.CheckboxColumn("✔", default=False),
                                 "id":              None,
                                 "username":        "Usuario",
-                                # FIX BUG: SelectboxColumn en lugar de text → evita roles inválidos
+                                # FIX BUG: SelectboxColumn → evita roles inválidos digitados a mano
                                 "role":            st.column_config.SelectboxColumn("Rol", options=["viewer","auditor","admin"]),
                                 "is_banned":       "Baneado",
                                 "failed_attempts": "Intentos Fallidos",
@@ -1520,9 +1575,9 @@ if role == 'admin' and len(tabs) > t_idx:
                         )
                         filas_del = ed_usrs[ed_usrs["Sel"] == True]
 
-                        # FIX BUG: fillna antes de comparar para evitar falsos hay_cambios por NaN
-                        orig_cmp = df_otros_edit.drop(columns=['Sel'], errors='ignore').fillna('').reset_index(drop=True)
-                        edit_cmp = ed_usrs.drop(columns=['Sel'], errors='ignore').fillna('').reset_index(drop=True)
+                        # FIX BUG: fillna antes de comparar → evita falsos hay_cambios por NaN
+                        orig_cmp    = df_otros_edit.drop(columns=['Sel'], errors='ignore').fillna('').reset_index(drop=True)
+                        edit_cmp    = ed_usrs.drop(columns=['Sel'], errors='ignore').fillna('').reset_index(drop=True)
                         hay_cambios = not orig_cmp.equals(edit_cmp)
 
                         u1c, u2c = st.columns(2)
@@ -1537,7 +1592,6 @@ if role == 'admin' and len(tabs) > t_idx:
                             else:
                                 with engine.begin() as conn:
                                     for rid in filas_del['id']:
-                                        # FIX BUG: null-safe cast de id
                                         if pd.notnull(rid):
                                             conn.execute(text("DELETE FROM users WHERE id=:id"), {"id": int(rid)})
                                 st.session_state.flash_msg = "🗑️ Usuario eliminado."
@@ -1547,15 +1601,14 @@ if role == 'admin' and len(tabs) > t_idx:
                             with engine.begin() as conn:
                                 for i, er in ed_usrs.iterrows():
                                     orig = df_otros_edit.drop(columns=['Sel'], errors='ignore').iloc[i]
-                                    # FIX SUPER ADMIN: saltar si por alguna razón llegara Admin
+                                    # FIX SUPER ADMIN: salto extra por si llegara el Admin
                                     if str(er.get('username', '')) == SUPERADMIN_USERNAME:
                                         continue
                                     if not orig.fillna('').equals(er.drop('Sel', errors='ignore').fillna('')):
                                         er_id = er.get('id')
-                                        # FIX BUG: null-safe id antes de UPDATE
                                         if pd.isnull(er_id):
                                             continue
-                                        # FIX BUG: failed_attempts nunca None
+                                        # FIX BUG: failed_attempts nunca None al guardar
                                         fa_val = int(er.get('failed_attempts', 0) or 0)
                                         conn.execute(
                                             text("UPDATE users SET role=:r,is_banned=:b,failed_attempts=:f WHERE id=:id"),
